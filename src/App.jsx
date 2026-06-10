@@ -3108,7 +3108,7 @@ export default function App(){
   const handlePwdSuccess=()=>{
     const d=pwdModal.dept;
     setAuthedDepts(p=>[...p,d]);
-    if(pwdModal.fromFab){setPwdModal(null);setCreateDept(null);setScreen("create");}
+    if(pwdModal.fromFab){setPwdModal(null);setCreateDept(null);setScreen(user?"create":"dash");}
     else{setSelDept(d);setDeptCanAdd(true);setScreen("dept");setPwdModal(null);}
   };
   const handleViewOnly=()=>{
