@@ -588,7 +588,7 @@ function FlowDiagram({invIds,flowStates,onReorder,onStateChange,canReorder,canCh
           </div>
         );
       })}
-      {nodes.length>3&&(
+      {(showAll||visibleIndexes.length<nodes.length)&&(
         <button onClick={()=>setShowAll(p=>!p)}
           style={{width:"100%",marginTop:8,background:"none",border:`1px solid ${BD}`,borderRadius:8,padding:"8px",cursor:"pointer",fontSize:12,color:T2,fontWeight:600,fontFamily:"inherit"}}>
           {showAll?"▲ Mostrar menos":`▼ Mostrar todo el flujo (${nodes.length} etapas)`}
