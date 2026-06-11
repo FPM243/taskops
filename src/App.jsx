@@ -154,6 +154,7 @@ const USERS = [
 ];
 USERS.forEach(u => { u.uc = DEPT_COLORS[u.dept]; });
 const DEPTS = [...new Set(USERS.map(u => u.dept))];
+const USERS_BY_DEPT = DEPTS.map(dept=>({dept,users:USERS.filter(u=>u.dept===dept)}));
 
 // ids que cada departamento puede seleccionar como responsable
 const ASSIGN_MATRIX = {
@@ -2019,13 +2020,21 @@ function ScreenCreate({user,taskCount,onSave,onCancel,defaultDept,taskToEdit,sav
                 </div>
               );})}
             </div>}
-            <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
-              {USERS.map(u=>{const count=form.invIds.filter(id=>id===u.id).length;const sel=count>0;const isMe=u.id===user.id;return(
-                <button key={u.id} onClick={()=>addInv(u.id)} style={{background:sel?u.uc+"15":CARD,color:sel?u.uc:T2,border:`1.5px solid ${sel?u.uc:BD}`,padding:"7px 12px",borderRadius:20,cursor:"pointer",fontSize:12,fontWeight:sel?700:400,display:"flex",alignItems:"center",gap:6,transition:"all .12s"}}>
-                  {sel&&<span style={{background:u.uc,color:"#fff",borderRadius:"50%",width:16,height:16,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:700}}>{count}</span>}
-                  <span>{isMe?"Yo mismo":shortName(u.name)}</span>
-                </button>
-              );})}
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              {USERS_BY_DEPT.map((g,gi)=>(
+                <div key={g.dept}>
+                  {gi>0&&<div style={{borderTop:`1px solid ${BD}`,marginBottom:10}}/>}
+                  <div style={{fontSize:10,fontWeight:600,color:T3,letterSpacing:.5,textTransform:"uppercase",marginBottom:6}}>{g.dept}</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                    {g.users.map(u=>{const count=form.invIds.filter(id=>id===u.id).length;const sel=count>0;const isMe=u.id===user.id;return(
+                      <button key={u.id} onClick={()=>addInv(u.id)} style={{background:sel?u.uc+"15":CARD,color:sel?u.uc:T2,border:`1.5px solid ${sel?u.uc:BD}`,padding:"7px 12px",borderRadius:20,cursor:"pointer",fontSize:12,fontWeight:sel?700:400,display:"flex",alignItems:"center",gap:6,transition:"all .12s"}}>
+                        {sel&&<span style={{background:u.uc,color:"#fff",borderRadius:"50%",width:16,height:16,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:700}}>{count}</span>}
+                        <span>{isMe?"Yo mismo":shortName(u.name)}</span>
+                      </button>
+                    );})}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
           <div><Lbl ch="FECHA LÍMITE *"/><input type="date" value={form.deadline} onChange={e=>setForm(p=>({...p,deadline:e.target.value}))} style={{...inp,borderRadius:10}}/></div>
