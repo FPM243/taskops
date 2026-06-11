@@ -2020,10 +2020,9 @@ function ScreenCreate({user,taskCount,onSave,onCancel,defaultDept,taskToEdit,sav
                 </div>
               );})}
             </div>}
-            <div style={{display:"flex",flexDirection:"column",gap:10}}>
-              {USERS_BY_DEPT.map((g,gi)=>(
+            <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(2,1fr)",gap:"14px 16px"}}>
+              {USERS_BY_DEPT.map(g=>(
                 <div key={g.dept}>
-                  {gi>0&&<div style={{borderTop:`1px solid ${BD}`,marginBottom:10}}/>}
                   <div style={{fontSize:10,fontWeight:600,color:T3,letterSpacing:.5,textTransform:"uppercase",marginBottom:6}}>{g.dept}</div>
                   <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
                     {g.users.map(u=>{const count=form.invIds.filter(id=>id===u.id).length;const sel=count>0;const isMe=u.id===user.id;return(
