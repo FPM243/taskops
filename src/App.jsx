@@ -2075,6 +2075,10 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onBack}){
   const [dests,setDests]=useState([]);
   const [texto,setTexto]=useState("");
   const [selectedAviso,setSelectedAviso]=useState(null);
+  const [draftAttachments,setDraftAttachments]=useState([]);
+  const [draftId,setDraftId]=useState(()=>`AV-${Date.now()}`);
+  const [uploadingAttach,setUploadingAttach]=useState(false);
+  const [attachErr,setAttachErr]=useState(null);
   const isMobile=useIsMobile();
 
   const myAvisos=useMemo(()=>
@@ -2105,19 +2109,45 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onBack}){
 
   const canSendAviso=texto.trim()&&dests.length>0;
 
+  const handleAttachFiles=async files=>{
+    setAttachErr(null);
+    for(const file of files){
+      if(file.size>MAX_ATTACHMENT_SIZE){setAttachErr(`"${file.name}" supera 20MB`);continue;}
+      setUploadingAttach(true);
+      const path=`avisos/${draftId}/${Date.now()}_${file.name}`;
+      const{error}=await supabase.storage.from("task-attachments").upload(path,file);
+      setUploadingAttach(false);
+      if(error){setAttachErr(error.message);continue;}
+      const newAtt={nombre:file.name,url:path,subidoPor:{id:user.id,name:user.name,ini:user.ini,uc:user.uc},fecha:new Date().toISOString()};
+      setDraftAttachments(p=>[...p,newAtt]);
+    }
+  };
+
+  const handleRemoveDraftAttachment=async idx=>{
+    const att=draftAttachments[idx];
+    setDraftAttachments(p=>p.filter((_,i)=>i!==idx));
+    if(att) await supabase.storage.from("task-attachments").remove([att.url]);
+  };
+
+  const handleDownloadAttachment=async att=>{
+    const{data,error}=await supabase.storage.from("task-attachments").createSignedUrl(att.url,60);
+    if(error){alert("No se pudo generar el enlace de descarga: "+error.message);return;}
+    window.open(data.signedUrl,"_blank");
+  };
+
   const send=()=>{
     if(!canSendAviso) return;
     const fecha=new Date().toISOString();
     if(dests.includes("todos")){
-      onSend({id:`AV-${Date.now()}-todos`,origen:user,destinatario:"todos",destinatarioId:"todos",destinatarioLabel:"Todos",texto:texto.trim(),fecha,leidoPor:[user.id]});
+      onSend({id:`AV-${Date.now()}-todos`,origen:user,destinatario:"todos",destinatarioId:"todos",destinatarioLabel:"Todos",texto:texto.trim(),fecha,leidoPor:[user.id],attachments:draftAttachments});
     } else {
       dests.forEach((destId,i)=>{
         const destUser=USERS.find(u=>u.id===destId);
         if(!destUser) return;
-        onSend({id:`AV-${Date.now()}-${i}-${destId}`,origen:user,destinatario:destUser,destinatarioId:destUser.id,destinatarioLabel:destUser.name,texto:texto.trim(),fecha,leidoPor:[user.id]});
+        onSend({id:`AV-${Date.now()}-${i}-${destId}`,origen:user,destinatario:destUser,destinatarioId:destUser.id,destinatarioLabel:destUser.name,texto:texto.trim(),fecha,leidoPor:[user.id],attachments:draftAttachments});
       });
     }
-    setTexto("");setDests([]);setTab("inbox");
+    setTexto("");setDests([]);setDraftAttachments([]);setDraftId(`AV-${Date.now()}`);setTab("inbox");
   };
 
   if(selectedAviso){
@@ -2177,6 +2207,25 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onBack}){
                   <Badge ch={leidoByMe?"✓ Leído":"⏳ Sin leer"} c={leidoByMe?"#059669":"#D97706"} bg={leidoByMe?"#ECFDF5":"#FFFBEB"}/>
                 )}
               </div>
+              {(a.attachments||[]).length>0&&(
+                <div>
+                  <Lbl ch="ARCHIVOS ADJUNTOS"/>
+                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                    {a.attachments.map((att,ai)=>(
+                      <div key={ai} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,background:BG,borderRadius:6,padding:"8px 12px"}}>
+                        <div style={{minWidth:0,flex:1}}>
+                          <div style={{fontSize:12,color:T1,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{att.nombre}</div>
+                          <div style={{fontSize:10,color:T3}}>{att.subidoPor?.name||"—"} · {fmtDT(att.fecha)}</div>
+                        </div>
+                        <button onClick={()=>handleDownloadAttachment(att)}
+                          style={{background:"none",border:`1px solid ${BD}`,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:600,color:PR,flexShrink:0,fontFamily:"inherit"}}>
+                          ⬇ Descargar
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </Card>
         </div>
@@ -2251,6 +2300,30 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onBack}){
                 <textarea value={texto} onChange={e=>setTexto(e.target.value)} rows={4}
                   placeholder="Escribe tu aviso aquí..." style={{...inp,borderRadius:10,lineHeight:1.7}}/>
               </div>
+              <div>
+                <Lbl ch="ARCHIVOS ADJUNTOS"/>
+                {draftAttachments.length>0&&(
+                  <div style={{display:"flex",flexDirection:"column",gap:4,marginBottom:8}}>
+                    {draftAttachments.map((att,ai)=>(
+                      <div key={ai} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,background:BG,borderRadius:6,padding:"6px 10px"}}>
+                        <div style={{minWidth:0,flex:1}}>
+                          <div style={{fontSize:12,color:T1,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{att.nombre}</div>
+                        </div>
+                        <button onClick={()=>handleRemoveDraftAttachment(ai)}
+                          style={{background:"none",border:`1px solid ${BD}`,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:600,color:"#DC2626",flexShrink:0,fontFamily:"inherit"}}>
+                          ✕ Quitar
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <label style={{display:"inline-flex",alignItems:"center",gap:6,background:BG,border:`1px dashed ${BD}`,borderRadius:6,padding:"6px 12px",cursor:uploadingAttach?"default":"pointer",fontSize:12,fontWeight:600,color:T2}}>
+                  {uploadingAttach?"Subiendo...":"+ Adjuntar archivo"}
+                  <input type="file" multiple disabled={uploadingAttach} style={{display:"none"}}
+                    onChange={e=>{const files=Array.from(e.target.files||[]);handleAttachFiles(files);e.target.value="";}}/>
+                </label>
+                {attachErr&&<div style={{fontSize:11,color:"#DC2626",marginTop:4}}>{attachErr}</div>}
+              </div>
               <button onClick={send} disabled={!canSendAviso}
                 style={{background:canSendAviso?PR:"#E2E8F0",color:canSendAviso?"#fff":T3,border:"none",padding:"13px",fontSize:13,fontWeight:700,cursor:canSendAviso?"pointer":"not-allowed",borderRadius:10,transition:"background .12s"}}>
                 📢 Enviar aviso{dests.length>1&&!dests.includes("todos")?` (${dests.length})`:""}
@@ -2278,6 +2351,9 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onBack}){
                         <span style={{fontSize:10,color:T3,whiteSpace:"nowrap"}}>{fmtFecha(a.fecha)}</span>
                       </div>
                       <p style={{fontSize:13,color:T1,lineHeight:1.6,margin:0,fontWeight:leido?400:500}}>{a.texto}</p>
+                      {(a.attachments||[]).length>0&&(
+                        <div style={{marginTop:4,fontSize:11,color:T3}}>📎 {a.attachments.length} archivo{a.attachments.length!==1?"s":""}</div>
+                      )}
                     </div>
                   </div>
                 </Card>
@@ -2303,6 +2379,9 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onBack}){
                         ?`Leído por ${Math.max(0,(a.leidoPor||[]).length-1)} usuario(s)`
                         :`${(a.leidoPor||[]).filter(id=>id!==user.id).length>0?"✓ Leído":"⏳ Sin leer aún"}`}
                     </div>
+                    {(a.attachments||[]).length>0&&(
+                      <div style={{marginTop:2,fontSize:10,color:T3}}>📎 {a.attachments.length} archivo{a.attachments.length!==1?"s":""}</div>
+                    )}
                   </div>
                 </div>
               </Card>
