@@ -116,6 +116,19 @@ async function sendWhatsAppNotification(type, toPhones, data) {
   }
 }
 
+async function sendSMSNotification(type, toPhones, data) {
+  if (!toPhones || !toPhones.length) return;
+  try {
+    const { error } = await supabase.functions.invoke("send-sms", {
+      body: { type, to: toPhones, data },
+    });
+    if (error) console.error("[SMS] error:", error.message);
+    else console.log(`[SMS] Enviado tipo '${type}' a ${toPhones.length} destinatario(s)`);
+  } catch (err) {
+    console.error("[SMS] Error:", err.message);
+  }
+}
+
 /* ════════════════════════════════════════
    DATA & CONSTANTS
 ════════════════════════════════════════ */
@@ -2815,6 +2828,12 @@ export default function App(){
                   taskTitle:task.title,
                   prevUserName:whoUser?.name||"Un colega",
                 }),0);
+                setTimeout(()=>sendSMSNotification("tu_turno",[nextUser.phone],{
+                  userName:nextUser.name,
+                  taskId:task.id,
+                  taskTitle:task.title,
+                  prevUserName:whoUser?.name||"Un colega",
+                }),0);
               }
             }
           }
@@ -2841,6 +2860,12 @@ export default function App(){
               }
               if(nextUser?.phone){
                 setTimeout(()=>sendWhatsAppNotification("preparate",[nextUser.phone],{
+                  userName:nextUser.name,
+                  taskId:task.id,
+                  taskTitle:task.title,
+                  prevUserName:whoUser?.name||"Un colega",
+                }),0);
+                setTimeout(()=>sendSMSNotification("preparate",[nextUser.phone],{
                   userName:nextUser.name,
                   taskId:task.id,
                   taskTitle:task.title,
@@ -2875,6 +2900,14 @@ export default function App(){
             }
             if(creatorUser?.phone){
               setTimeout(()=>sendWhatsAppNotification("avance_flujo",[creatorUser.phone],{
+                userName:creatorUser.name,
+                taskId:task.id,
+                taskTitle:task.title,
+                whoName:whoUser.name,
+                whoDept:whoUser.dept,
+                newState:newSt,
+              }),0);
+              setTimeout(()=>sendSMSNotification("avance_flujo",[creatorUser.phone],{
                 userName:creatorUser.name,
                 taskId:task.id,
                 taskTitle:task.title,
@@ -2917,6 +2950,12 @@ export default function App(){
                     taskTitle:task.title,
                     completedBy:user?.name||"—",
                   }),0);
+                  setTimeout(()=>sendSMSNotification("tarea_completada",[destUser.phone],{
+                    userName:destUser.name,
+                    taskId:task.id,
+                    taskTitle:task.title,
+                    completedBy:user?.name||"—",
+                  }),0);
                 }
               });
             }
@@ -2948,6 +2987,13 @@ export default function App(){
             }),0);
             if(destUser?.phone){
               setTimeout(()=>sendWhatsAppNotification("tarea_bloqueada",[destUser.phone],{
+                userName:destUser.name,
+                taskId:task.id,
+                taskTitle:task.title,
+                blockedBy:user.name,
+                reason:reason,
+              }),0);
+              setTimeout(()=>sendSMSNotification("tarea_bloqueada",[destUser.phone],{
                 userName:destUser.name,
                 taskId:task.id,
                 taskTitle:task.title,
@@ -3037,6 +3083,15 @@ export default function App(){
           deadline:t.deadline||"Sin fecha",
           responsible:t.responsible?.name||"—",
         }),0);
+        setTimeout(()=>sendSMSNotification("nueva_tarea",[u.phone],{
+          userName:u.name,
+          taskId:t.id,
+          taskTitle:t.title,
+          taskType:t.type,
+          priority:t.priority,
+          deadline:t.deadline||"Sin fecha",
+          responsible:t.responsible?.name||"—",
+        }),0);
       }
     });
     return true;
@@ -3071,6 +3126,12 @@ export default function App(){
               fromDept:a.origen?.dept||"—",
               texto:a.texto,
             }),0);
+            setTimeout(()=>sendSMSNotification("aviso",[u.phone],{
+              userName:u.name,
+              fromName:a.origen?.name||"—",
+              fromDept:a.origen?.dept||"—",
+              texto:a.texto,
+            }),0);
           }
         });
       } else {
@@ -3085,6 +3146,12 @@ export default function App(){
         }
         if(destUser?.phone){
           setTimeout(()=>sendWhatsAppNotification("aviso",[destUser.phone],{
+            userName:destUser.name,
+            fromName:a.origen?.name||"—",
+            fromDept:a.origen?.dept||"—",
+            texto:a.texto,
+          }),0);
+          setTimeout(()=>sendSMSNotification("aviso",[destUser.phone],{
             userName:destUser.name,
             fromName:a.origen?.name||"—",
             fromDept:a.origen?.dept||"—",
@@ -3159,6 +3226,13 @@ export default function App(){
               });
               if(destUser?.phone){
                 sendWhatsAppNotification("deadline_proximo",[destUser.phone],{
+                  userName:destUser.name,
+                  taskId:task.id,
+                  taskTitle:task.title,
+                  deadline:task.deadline,
+                  hoursLeft:Math.round(hoursLeft),
+                });
+                sendSMSNotification("deadline_proximo",[destUser.phone],{
                   userName:destUser.name,
                   taskId:task.id,
                   taskTitle:task.title,
