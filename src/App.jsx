@@ -834,7 +834,7 @@ function ScreenDashboard({tasks,user,onStatClick,onDeptClick,onPickerDeptClick,o
       />
 
       {userIsAuthed&&(
-        <div className="snav" style={{background:CARD,borderBottom:`1px solid ${BD}`,padding:"0 16px",display:"flex",alignItems:"center",gap:6,height:44,justifyContent:isMobile?"flex-start":"center",flexWrap:isMobile?"nowrap":"wrap"}}>
+        <div className="snav" style={{background:CARD,borderBottom:`1px solid ${BD}`,padding:isMobile?"6px 16px":"0 16px",display:"flex",alignItems:"center",gap:6,height:isMobile?"auto":44,justifyContent:isMobile?"flex-start":"center",flexWrap:"wrap"}}>
           {user?.dept==="Dirección"&&<button className="nb" onClick={onDelays} style={{fontSize:11}}>🚨 Retrasos</button>}
           {(user?.dept==="Dirección"||user?.dept==="Ingenieria")&&<button className="nb" onClick={onDeleted} style={{fontSize:11}}>🗑️ Eliminadas</button>}
           <button className="nb" onClick={onStuck}  style={{fontSize:11}}>⏸ Estancadas</button>
