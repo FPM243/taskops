@@ -1058,25 +1058,57 @@ function ScreenFilteredList({tasks,filter,user,onBack,onTaskClick}){
 /* ════════════════════════════════════════
    SCREEN: SEARCH
 ════════════════════════════════════════ */
-function ScreenSearch({tasks,user,onBack,onTaskClick}){
+function ScreenSearch({tasks,user,onBack,onTaskClick,avisos,onAvisoClick}){
   const [q,setQ]=useState("");
-  const results=useMemo(()=>{
+  const taskResults=useMemo(()=>{
     if(!q.trim()) return [];
     const lq=q.toLowerCase();
     return tasks.filter(t=>t.title.toLowerCase().includes(lq)||t.description?.toLowerCase().includes(lq)||t.id.toLowerCase().includes(lq)||t.responsible?.name?.toLowerCase().includes(lq)||t.responsible?.dept?.toLowerCase().includes(lq)||t.type?.toLowerCase().includes(lq)).slice(0,20);
   },[tasks,q]);
+  const avisoResults=useMemo(()=>{
+    if(!q.trim()) return [];
+    const lq=q.toLowerCase();
+    return avisos.filter(a=>a.texto?.toLowerCase().includes(lq)||a.origen?.name?.toLowerCase().includes(lq)||a.origen?.dept?.toLowerCase().includes(lq)).slice(0,10);
+  },[avisos,q]);
+  const total=taskResults.length+avisoResults.length;
+  const fmtFechaShort=f=>{const d=new Date(f);return d.toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"});};
   return(
     <div style={{minHeight:"100vh",background:BG}}>
       <NavBar
         left={<><BackBtn onClick={onBack}/><Logo/></>}
-        center={<input value={q} onChange={e=>setQ(e.target.value)} autoFocus placeholder="Buscar por título, ID, responsable, departamento, tipo..." style={{...inp,width:"min(400px,60vw)",borderRadius:20}}/>}
+        center={<input value={q} onChange={e=>setQ(e.target.value)} autoFocus placeholder="Buscar tareas o avisos..." style={{...inp,width:"min(400px,60vw)",borderRadius:20}}/>}
         right={null}
       />
       <div style={{maxWidth:900,margin:"0 auto",padding:"24px"}}>
-        {!q.trim()&&<div style={{textAlign:"center",padding:"60px 0",color:T3,fontSize:14}}>Empieza a escribir para buscar tareas...</div>}
-        {q.trim()&&results.length===0&&<div style={{textAlign:"center",padding:"60px 0",color:T3,fontSize:14}}>Sin resultados para "{q}"</div>}
-        {results.map(t=><TRow key={t.id} t={t} onClick={()=>onTaskClick(t)}/>)}
-        {results.length>0&&<div style={{textAlign:"center",marginTop:12,fontSize:12,color:T3}}>{results.length} resultado{results.length!==1?"s":""}</div>}
+        {!q.trim()&&<div style={{textAlign:"center",padding:"60px 0",color:T3,fontSize:14}}>Empieza a escribir para buscar tareas o avisos...</div>}
+        {q.trim()&&total===0&&<div style={{textAlign:"center",padding:"60px 0",color:T3,fontSize:14}}>Sin resultados para "{q}"</div>}
+        {taskResults.length>0&&(
+          <>
+            <div style={{fontSize:11,fontWeight:700,color:T3,letterSpacing:.8,marginBottom:8}}>TAREAS ({taskResults.length})</div>
+            {taskResults.map(t=><TRow key={t.id} t={t} onClick={()=>onTaskClick(t)}/>)}
+          </>
+        )}
+        {avisoResults.length>0&&(
+          <>
+            <div style={{fontSize:11,fontWeight:700,color:T3,letterSpacing:.8,margin:`${taskResults.length>0?20:0}px 0 8px`}}>AVISOS ({avisoResults.length})</div>
+            {avisoResults.map(a=>(
+              <Card key={a.id} cls="rw" onClick={()=>onAvisoClick(a)} sx={{padding:"14px 18px",marginBottom:8,borderLeft:`3px solid #F59E0B`}}>
+                <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+                  <div style={{width:32,height:32,borderRadius:"50%",background:"#FEF3C7",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:15}}>📢</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:4,gap:8,flexWrap:"wrap"}}>
+                      <span style={{fontSize:12,fontWeight:700,color:T1}}>{a.origen?.name}<span style={{fontWeight:400,color:T3}}> · {a.origen?.dept}</span></span>
+                      <span style={{fontSize:10,color:T3,whiteSpace:"nowrap"}}>{fmtFechaShort(a.fecha)}</span>
+                    </div>
+                    <p style={{fontSize:13,color:T2,lineHeight:1.5,margin:0,overflow:"hidden",textOverflow:"ellipsis",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical"}}>{a.texto}</p>
+                    <div style={{marginTop:4,fontSize:11,color:T3}}>→ {a.destinatarioLabel||"Todos"}</div>
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </>
+        )}
+        {total>0&&<div style={{textAlign:"center",marginTop:12,fontSize:12,color:T3}}>{total} resultado{total!==1?"s":""}</div>}
       </div>
     </div>
   );
@@ -1620,8 +1652,11 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
   const sendComment=()=>{
     if(!comment.trim()) return;
     const _now=new Date();
-    const c={user,text:comment,time:_now.toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"})+" "+_now.toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"})};
-    onUpdate(taskId,{comments:[...(task?.comments||[]),c]});setComment("");
+    const c={user,text:comment,time:_now.toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"})+" "+_now.toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"}),iso:_now.toISOString()};
+    onUpdate(taskId,{comments:[...(task?.comments||[]),c]});
+    const recipientIds=[...new Set([...(task?.invIds||[]),task?.responsible?.id,task?.creator?.id].filter(Boolean))].filter(id=>id!==user?.id);
+    if(recipientIds.length>0) sendPushNotification(recipientIds,`💬 Nuevo comentario en: ${task?.title}`,`${user?.name}: ${comment.trim().slice(0,80)}${comment.trim().length>80?"…":""}`);
+    setComment("");
   };
 
   if(!task) return <div style={{padding:40,color:T2}}>Tarea no encontrada</div>;
@@ -2083,11 +2118,11 @@ function ScreenCreate({user,taskCount,onSave,onCancel,defaultDept,taskToEdit,sav
 /* ════════════════════════════════════════
    SCREEN: AVISOS
 ════════════════════════════════════════ */
-function ScreenAviso({user,avisos,onSend,onMarkRead,onBack}){
+function ScreenAviso({user,avisos,onSend,onMarkRead,onBack,initialSelected}){
   const [tab,setTab]=useState("inbox");
   const [dests,setDests]=useState([]);
   const [texto,setTexto]=useState("");
-  const [selectedAviso,setSelectedAviso]=useState(null);
+  const [selectedAviso,setSelectedAviso]=useState(initialSelected||null);
   const [draftAttachments,setDraftAttachments]=useState([]);
   const [draftId,setDraftId]=useState(()=>`AV-${Date.now()}`);
   const [uploadingAttach,setUploadingAttach]=useState(false);
@@ -2646,6 +2681,7 @@ export default function App(){
   const [tasks,       setTasks]      = useState([]);
   const [selDept,     setSelDept]    = useState(null);
   const [selTask,     setSelTask]    = useState(null);
+  const [selAviso,    setSelAviso]   = useState(null);
   const [fromScr,     setFromScr]    = useState("dash");
   const [filter,      setFilter]     = useState(null);
   const [authedDepts, setAuthedDepts]= useState([]);
@@ -3257,6 +3293,10 @@ export default function App(){
     tasks.forEach(t=>{
       if((t.invIds||[]).includes(user.id)||t.responsible?.id===user.id){if(new Date(t.createdAt||0)>since)n++;}
       if(t.status==="Completada"&&(t.notifyOnComplete||[]).includes(user.id)){if(new Date((t.completedAt||t.createdAt)||0)>since)n++;}
+      const isRecipient=(t.invIds||[]).includes(user.id)||t.responsible?.id===user.id||t.creator?.id===user.id;
+      if(isRecipient){
+        (t.comments||[]).forEach(c=>{if(c.user?.id!==user.id&&new Date(c.iso||0)>since)n++;});
+      }
     });
     avisos.forEach(a=>{if(a.destinatarioId==="todos"||a.destinatarioId===user.id){if(new Date(a.fecha||0)>since)n++;}});
     return n;
@@ -3319,7 +3359,7 @@ export default function App(){
 
   if(screen==="filtered"&&filter) return <><style>{CSS}</style><ScreenFilteredList tasks={tasks} filter={filter} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"filtered")}/></>;
 
-  if(screen==="search") return <><style>{CSS}</style><ScreenSearch tasks={tasks} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"search")}/></>;
+  if(screen==="search") return <><style>{CSS}</style><ScreenSearch tasks={tasks} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"search")} avisos={avisos} onAvisoClick={a=>{setSelAviso(a);setScreen("avisos");}}/></>;
 
   if(screen==="myTasks"&&user) return <><style>{CSS}</style><ScreenMyTasks tasks={tasks} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"myTasks")}/></>;
 
@@ -3331,7 +3371,7 @@ export default function App(){
 
   if(screen==="deleted"&&user&&(user.dept==="Dirección"||user.dept==="Ingenieria")) return <><style>{CSS}</style><ScreenDeletedTasks deletedTasks={deletedTasks} user={user} onBack={()=>setScreen("dash")}/></>;
 
-  if(screen==="avisos"&&user) return <><style>{CSS}</style><ScreenAviso user={user} avisos={avisos} onSend={sendAviso} onMarkRead={markAvisoRead} onBack={()=>setScreen("dash")}/></>;
+  if(screen==="avisos"&&user) return <><style>{CSS}</style><ScreenAviso user={user} avisos={avisos} onSend={sendAviso} onMarkRead={markAvisoRead} onBack={()=>{setSelAviso(null);setScreen("dash");}} initialSelected={selAviso}/></>;
 
   if(screen==="notif"&&user) return <><style>{CSS}</style><ScreenNotificaciones tasks={tasks} avisos={avisos} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"notif")}/></>;
 
