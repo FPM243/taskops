@@ -748,7 +748,7 @@ function ScreenLogin({onLogin,onBack}){
 /* ════════════════════════════════════════
    SCREEN: DASHBOARD
 ════════════════════════════════════════ */
-function ScreenDashboard({tasks,user,onStatClick,onDeptClick,onPickerDeptClick,onTaskClick,onNewTask,onSearch,onStats,onMyTasks,onCalendar,onDelays,onDeleted,userIsAuthed,onRequestAuth,deptIsAuthed,dbConnected,onAvisos,unreadAvisos,isGuest,onLogin,onNotif,onLogout,unreadNotif}){
+function ScreenDashboard({tasks,user,onStatClick,onDeptClick,onPickerDeptClick,onTaskClick,onNewTask,onSearch,onStats,onMyTasks,onCalendar,onDelays,onDeleted,onStuck,userIsAuthed,onRequestAuth,deptIsAuthed,dbConnected,onAvisos,unreadAvisos,isGuest,onLogin,onNotif,onLogout,unreadNotif}){
   const [pickerOpen,setPickerOpen]=useState(false);
   const [tab,setTab]=useState("active");
   const isMobile=useIsMobile();
@@ -837,6 +837,7 @@ function ScreenDashboard({tasks,user,onStatClick,onDeptClick,onPickerDeptClick,o
         <div className="snav" style={{background:CARD,borderBottom:`1px solid ${BD}`,padding:"0 16px",display:"flex",alignItems:"center",gap:6,height:44,justifyContent:isMobile?"flex-start":"center",flexWrap:isMobile?"nowrap":"wrap"}}>
           {user?.dept==="Dirección"&&<button className="nb" onClick={onDelays} style={{fontSize:11}}>🚨 Retrasos</button>}
           {(user?.dept==="Dirección"||user?.dept==="Ingenieria")&&<button className="nb" onClick={onDeleted} style={{fontSize:11}}>🗑️ Eliminadas</button>}
+          <button className="nb" onClick={onStuck}  style={{fontSize:11}}>⏸ Estancadas</button>
           <button className="nb" onClick={onSearch}  style={{fontSize:11}}>🔍 Buscar</button>
           <button className="nb" onClick={onMyTasks} style={{fontSize:11}}>👤 Mis Tareas</button>
           <button className="nb" onClick={onCalendar}style={{fontSize:11}}>📅 Calendario</button>
@@ -2520,6 +2521,101 @@ function ScreenDelays({tasks,user,onBack,onTaskClick}){
 }
 
 /* ════════════════════════════════════════
+   SCREEN: STUCK TASKS
+════════════════════════════════════════ */
+function ScreenStuckTasks({tasks,user,onBack,onTaskClick}){
+  const stuckItems=useMemo(()=>{
+    const result=[];
+    tasks.forEach(t=>{
+      if(t.status==="Completada"||t.status==="Cancelada") return;
+      const invIds=t.invIds||[];
+      const flowStates=t.flowStates||{};
+      for(let i=0;i<invIds.length;i++){
+        const st=flowStates[String(i)]||"Pendiente";
+        if(st!=="Pendiente") continue;
+        const isFirst=i===0;
+        const prevDone=i>0&&(flowStates[String(i-1)]||"Pendiente")==="Completado";
+        if(isFirst||prevDone){
+          result.push({task:t,nodeIndex:i,stuckUser:USERS.find(u=>u.id===invIds[i])||null});
+          break;
+        }
+      }
+    });
+    return result;
+  },[tasks]);
+
+  const byDept=useMemo(()=>{
+    const map={};
+    DEPTS.forEach(d=>{map[d]=[];});
+    stuckItems.forEach(item=>{
+      const d=item.stuckUser?.dept||item.task.responsible?.dept;
+      if(d&&map[d]) map[d].push(item);
+    });
+    return Object.entries(map).filter(([,ts])=>ts.length>0);
+  },[stuckItems]);
+
+  const daysActive=t=>{
+    if(!t.createdAt) return null;
+    return Math.max(0,Math.round((new Date()-new Date(t.createdAt))/86400000));
+  };
+
+  return(
+    <div style={{minHeight:"100vh",background:BG}}>
+      <NavBar
+        left={<><BackBtn onClick={onBack}/><div>
+          <div style={{fontWeight:700,fontSize:15,color:T1}}>Tareas estancadas</div>
+          <div style={{fontSize:11,color:T2}}>{stuckItems.length} tarea{stuckItems.length!==1?"s":""} sin avance</div>
+        </div></>}
+        center={null} right={null}
+      />
+      <div style={{maxWidth:1000,margin:"0 auto",padding:"24px"}}>
+        {stuckItems.length===0&&(
+          <div style={{textAlign:"center",padding:"60px 0",color:T3,fontSize:14}}>Sin tareas estancadas — todo en movimiento</div>
+        )}
+        {byDept.map(([dept,items])=>(
+          <div key={dept} style={{marginBottom:28}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,paddingBottom:8,borderBottom:`2px solid ${dc(dept)}22`}}>
+              <div style={{width:12,height:12,borderRadius:"50%",background:dc(dept)}}/>
+              <span style={{fontWeight:700,fontSize:14,color:T1}}>{dept}</span>
+              <span style={{fontSize:12,color:T3,marginLeft:2}}>— {items.length} tarea{items.length!==1?"s":""}</span>
+            </div>
+            {items.map(({task:t,nodeIndex,stuckUser})=>{
+              const days=daysActive(t);
+              return(
+                <Card key={t.id} cls="rw" sx={{padding:"13px 16px",marginBottom:8,borderLeft:`4px solid #6B7280`}} onClick={()=>onTaskClick(t)}>
+                  <div style={{display:"flex",alignItems:"flex-start",gap:12}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{display:"flex",gap:6,marginBottom:5,flexWrap:"wrap",alignItems:"center"}}>
+                        <span style={{fontSize:10,color:T3}}>{t.id}</span>
+                        <Badge ch="○ Sin iniciar etapa" c="#6B7280" bg="#F3F4F6"/>
+                        <Badge ch={t.priority} c={PC[t.priority].c} bg={PC[t.priority].bg}/>
+                        {days!==null&&<Badge ch={`${days}d activa`} c="#6B7280" bg="#F3F4F6"/>}
+                      </div>
+                      <div style={{fontSize:13,fontWeight:600,color:T1,marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.title}</div>
+                      <div style={{fontSize:11,color:T2}}>
+                        Espera acción de: <span style={{fontWeight:600,color:T1}}>{stuckUser?.name||"—"}</span>
+                        {stuckUser?.dept&&<span style={{color:T3}}> · {stuckUser.dept}</span>}
+                        <span style={{color:T3}}> (etapa {nodeIndex+1} de {(t.invIds||[]).length})</span>
+                      </div>
+                    </div>
+                    {stuckUser&&(
+                      <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,flexShrink:0}}>
+                        <Av u={stuckUser} size={30}/>
+                        <span style={{fontSize:10,color:T2,textAlign:"center",maxWidth:70,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{stuckUser.name}</span>
+                      </div>
+                    )}
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════
    SCREEN: DELETED TASKS
 ════════════════════════════════════════ */
 function ScreenDeletedTasks({deletedTasks,user,onBack}){
@@ -3370,6 +3466,8 @@ export default function App(){
 
   if(screen==="delays"&&user) return <><style>{CSS}</style><ScreenDelays tasks={tasks} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"delays")}/></>;
 
+  if(screen==="stuck"&&user) return <><style>{CSS}</style><ScreenStuckTasks tasks={tasks} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"stuck")}/></>;
+
   if(screen==="deleted"&&user&&(user.dept==="Dirección"||user.dept==="Ingenieria")) return <><style>{CSS}</style><ScreenDeletedTasks deletedTasks={deletedTasks} user={user} onBack={()=>setScreen("dash")}/></>;
 
   if(screen==="avisos"&&user) return <><style>{CSS}</style><ScreenAviso user={user} avisos={avisos} onSend={sendAviso} onMarkRead={markAvisoRead} onBack={()=>{setSelAviso(null);setScreen("dash");}} initialSelected={selAviso}/></>;
@@ -3390,6 +3488,7 @@ export default function App(){
         onMyTasks={()=>setScreen("myTasks")}
         onCalendar={()=>setScreen("calendar")}
         onDelays={()=>setScreen("delays")}
+        onStuck={()=>setScreen("stuck")}
         onDeleted={()=>setScreen("deleted")}
         userIsAuthed={userIsAuthed}
         onRequestAuth={user?()=>setPwdModal({dept:user.dept,fromFab:true}):()=>setScreen("login")}
