@@ -2579,7 +2579,7 @@ function ScreenDeletedTasks({deletedTasks,user,onBack}){
 /* ════════════════════════════════════════
    SCREEN: NOTIFICACIONES
 ════════════════════════════════════════ */
-function ScreenNotificaciones({tasks,avisos,user,onBack,onTaskClick}){
+function ScreenNotificaciones({tasks,avisos,user,onBack,onTaskClick,onAvisoClick}){
   const isMobile=useIsMobile();
 
   const items=useMemo(()=>{
@@ -2627,6 +2627,7 @@ function ScreenNotificaciones({tasks,avisos,user,onBack,onTaskClick}){
           body:a.texto,
           date:a.fecha,
           leido,
+          aviso:a,
           color:"#D97706",bg:"#FFFBEB",
         });
       }
@@ -2650,9 +2651,9 @@ function ScreenNotificaciones({tasks,avisos,user,onBack,onTaskClick}){
       <div style={{maxWidth:760,margin:"0 auto",padding:"24px"}}>
         {items.length===0&&<div style={{textAlign:"center",padding:"60px 0",color:T3,fontSize:14}}>Sin notificaciones aún</div>}
         {items.map((item,i)=>(
-          <div key={i} onClick={item.task?()=>onTaskClick(item.task):undefined}
-            style={{display:"flex",gap:12,alignItems:"flex-start",background:CARD,border:`1px solid ${BD}`,borderLeft:`3px solid ${item.color}`,borderRadius:12,padding:"14px 16px",marginBottom:10,cursor:item.task?"pointer":"default",transition:"box-shadow .12s"}}
-            onMouseEnter={e=>{if(item.task)e.currentTarget.style.boxShadow=SH;}}
+          <div key={i} onClick={item.task?()=>onTaskClick(item.task):item.aviso?()=>onAvisoClick(item.aviso):undefined}
+            style={{display:"flex",gap:12,alignItems:"flex-start",background:CARD,border:`1px solid ${BD}`,borderLeft:`3px solid ${item.color}`,borderRadius:12,padding:"14px 16px",marginBottom:10,cursor:(item.task||item.aviso)?"pointer":"default",transition:"box-shadow .12s"}}
+            onMouseEnter={e=>{if(item.task||item.aviso)e.currentTarget.style.boxShadow=SH;}}
             onMouseLeave={e=>{e.currentTarget.style.boxShadow="none";}}>
             <div style={{width:36,height:36,borderRadius:10,background:item.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{item.icon}</div>
             <div style={{flex:1,minWidth:0}}>
@@ -3373,7 +3374,7 @@ export default function App(){
 
   if(screen==="avisos"&&user) return <><style>{CSS}</style><ScreenAviso user={user} avisos={avisos} onSend={sendAviso} onMarkRead={markAvisoRead} onBack={()=>{setSelAviso(null);setScreen("dash");}} initialSelected={selAviso}/></>;
 
-  if(screen==="notif"&&user) return <><style>{CSS}</style><ScreenNotificaciones tasks={tasks} avisos={avisos} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"notif")}/></>;
+  if(screen==="notif"&&user) return <><style>{CSS}</style><ScreenNotificaciones tasks={tasks} avisos={avisos} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"notif")} onAvisoClick={a=>{setSelAviso(a);setScreen("avisos");}}/></>;
 
   return(
     <>
