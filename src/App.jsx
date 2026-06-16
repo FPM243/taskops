@@ -2917,12 +2917,15 @@ export default function App(){
       const task=prev.find(t=>t.id===id);
       if(!task) return prev;
       const updated={...task,...patch};
-      supabase.from("tasks").update({data:updated}).eq("id",id)
-        .then(({error})=>{
+      supabase.rpc("merge_task_data",{task_id:id,patch})
+        .then(({data:merged,error})=>{
           if(error){
             console.error("[Supabase] Error en UPDATE task:",id,error.message,error);
             setTasks(current=>current.map(t=>t.id===id?task:t));
-          } else console.log("[Supabase] UPDATE ok:",id);
+          } else {
+            console.log("[Supabase] UPDATE ok:",id);
+            if(merged) setTasks(current=>current.map(t=>t.id===id?merged:t));
+          }
         });
       // Push: responsable cambiado
       if(patch.responsible?.id&&patch.responsible.id!==task.responsible?.id){
