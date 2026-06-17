@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, Fragment } from "react";
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import supabase from "./supabase";
 
@@ -36,6 +36,22 @@ function urlBase64ToUint8Array(base64String) {
   const out = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
   return out;
+}
+
+function showUpdateBanner() {
+  if (document.getElementById("taskops-update-banner")) return;
+  const bar = document.createElement("div");
+  bar.id = "taskops-update-banner";
+  bar.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:9999;background:#1E293B;color:#fff;padding:12px 16px;display:flex;align-items:center;justify-content:center;gap:12px;font-family:inherit;font-size:13px;box-shadow:0 -2px 12px rgba(0,0,0,.25);flex-wrap:wrap;";
+  const msg = document.createElement("span");
+  msg.textContent = "🔄 Hay una nueva versión disponible.";
+  const btn = document.createElement("button");
+  btn.textContent = "Actualizar ahora";
+  btn.style.cssText = "background:#fff;color:#1E293B;border:none;padding:7px 14px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;";
+  btn.onclick = () => window.location.reload();
+  bar.appendChild(msg);
+  bar.appendChild(btn);
+  document.body.appendChild(bar);
 }
 
 async function registerPush(user) {
@@ -337,9 +353,12 @@ const isTodayDeadline = d => {
   const dt=new Date(d+"T12:00:00"), now=new Date();
   return dt.toDateString()===now.toDateString();
 };
-const calcProgress = (invIds,flowStates) => {
+const genStageId = () => `st${Date.now().toString(36)}${Math.random().toString(36).slice(2,7)}`;
+const getStageIds = (invIds,flowStageIds) => (flowStageIds&&flowStageIds.length===invIds.length) ? flowStageIds : invIds.map((_,i)=>String(i));
+const calcProgress = (invIds,flowStates,flowStageIds) => {
   if(!invIds||!invIds.length) return null;
-  const vals=invIds.map((_,idx)=>{const s=flowStates?.[String(idx)]||"Pendiente";return s==="Completado"?100:s==="En proceso"?50:0;});
+  const sids=getStageIds(invIds,flowStageIds);
+  const vals=invIds.map((_,idx)=>{const s=flowStates?.[sids[idx]]||"Pendiente";return s==="Completado"?100:s==="En proceso"?50:0;});
   return Math.round(vals.reduce((a,b)=>a+b,0)/vals.length);
 };
 function fmtDate(d){
@@ -419,11 +438,11 @@ function Logo(){
 }
 function BackBtn({onClick}){return <button onClick={onClick} className="hl" style={{background:"none",border:"none",color:T2,cursor:"pointer",fontSize:22,lineHeight:1,padding:"4px"}}>←</button>;}
 
-function TRow({t,onClick}){
+function TRow({t,onClick,roleBadge}){
   const tt=TT[t.type]||{c:T2,bg:"#F9FAFB"};
   const sc=SC[t.status];const pc=PC[t.priority];
   const dl=dlStatus(t.deadline,t.status);
-  const pct=calcProgress(t.invIds,t.flowStates);
+  const pct=calcProgress(t.invIds,t.flowStates,t.flowStageIds);
   const pctColor=pct===100?"#059669":pct>=50?"#D97706":"#6B7280";
   return(
     <Card cls="rw" sx={{padding:"14px 18px",marginBottom:8,borderLeft:`3px solid ${dc(t.responsible?.dept||"Dirección")}`}} onClick={onClick}>
@@ -431,6 +450,7 @@ function TRow({t,onClick}){
         <div style={{flex:1,minWidth:0}}>
           <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:6,flexWrap:"wrap"}}>
             <span style={{fontSize:10,color:T3,fontWeight:500}}>{t.id}</span>
+            {roleBadge&&<Badge ch={roleBadge} c={roleBadge==="Responsable"?PR:"#059669"} bg={roleBadge==="Responsable"?PRl:"#ECFDF5"}/>}
             <Badge ch={t.type}     c={tt.c} bg={tt.bg}/>
             <Badge ch={t.priority} c={pc.c} bg={pc.bg}/>
             <Badge ch={t.status}   c={sc.c} bg={sc.bg}/>
@@ -455,8 +475,9 @@ function TRow({t,onClick}){
 /* ════════════════════════════════════════
    FLOW DIAGRAM
 ════════════════════════════════════════ */
-function FlowDiagram({invIds,flowStates,onReorder,onStateChange,canReorder,canChangeState,nodeNotes,onNoteChange,canEditNotes,myInvIndex,canChangeOwnStep,attachments,taskId,user,onAttachmentsChange}){
+function FlowDiagram({invIds,flowStates,flowStageIds,onReorder,onStateChange,canReorder,canChangeState,nodeNotes,onNoteChange,canEditNotes,myInvIndex,canChangeOwnStep,attachments,taskId,user,onAttachmentsChange}){
   const nodes=getInvolved(invIds);
+  const sids=getStageIds(invIds,flowStageIds);
   const [editNotes,setEditNotes]=useState({});
   const [expandedNotes,setExpandedNotes]=useState({});
   const [showAll,setShowAll]=useState(false);
@@ -468,11 +489,12 @@ function FlowDiagram({invIds,flowStates,onReorder,onStateChange,canReorder,canCh
     if(file.size>MAX_ATTACHMENT_SIZE){setUploadErr(p=>({...p,[idx]:"El archivo supera 20MB"}));return;}
     setUploadErr(p=>({...p,[idx]:null}));
     setUploading(p=>({...p,[idx]:true}));
-    const path=`${taskId}/${idx}/${Date.now()}_${file.name}`;
+    const sid=sids[idx];
+    const path=`${taskId}/${sid}/${Date.now()}_${file.name}`;
     const{error}=await supabase.storage.from("task-attachments").upload(path,file);
     setUploading(p=>({...p,[idx]:false}));
     if(error){setUploadErr(p=>({...p,[idx]:error.message}));return;}
-    const newAtt={nombre:file.name,url:path,nodeIndex:idx,subidoPor:{id:user.id,name:user.name,ini:user.ini,uc:user.uc},fecha:new Date().toISOString()};
+    const newAtt={nombre:file.name,url:path,nodeIndex:sid,subidoPor:{id:user.id,name:user.name,ini:user.ini,uc:user.uc},fecha:new Date().toISOString()};
     onAttachmentsChange([...(attachments||[]),newAtt]);
   };
   const handleDownload=async att=>{
@@ -480,25 +502,33 @@ function FlowDiagram({invIds,flowStates,onReorder,onStateChange,canReorder,canCh
     if(error){alert("No se pudo generar el enlace de descarga: "+error.message);return;}
     window.open(data.signedUrl,"_blank");
   };
-  const moveUp=i=>{const a=[...invIds];[a[i-1],a[i]]=[a[i],a[i-1]];onReorder(a);};
-  const moveDown=i=>{const a=[...invIds];[a[i],a[i+1]]=[a[i+1],a[i]];onReorder(a);};
-  const nextIdx=nodes.findIndex((_,idx)=>(flowStates[String(idx)]||"Pendiente")!=="Completado");
-  const getNoteVal=idx=>editNotes[idx]!==undefined?editNotes[idx]:(nodeNotes?.[idx]||"");
+  const moveUp=i=>{
+    const a=[...invIds];[a[i-1],a[i]]=[a[i],a[i-1]];
+    const s=[...sids];[s[i-1],s[i]]=[s[i],s[i-1]];
+    onReorder(a,s);
+  };
+  const moveDown=i=>{
+    const a=[...invIds];[a[i],a[i+1]]=[a[i+1],a[i]];
+    const s=[...sids];[s[i],s[i+1]]=[s[i+1],s[i]];
+    onReorder(a,s);
+  };
+  const nextIdx=nodes.findIndex((_,idx)=>(flowStates[sids[idx]]||"Pendiente")!=="Completado");
+  const getNoteVal=idx=>editNotes[idx]!==undefined?editNotes[idx]:(nodeNotes?.[sids[idx]]||"");
   const activeIdx=nextIdx===-1?nodes.length-1:nextIdx;
   const visibleIndexes=showAll?nodes.map((_,vi)=>vi):[...new Set([activeIdx-1,activeIdx,activeIdx+1].filter(vi=>vi>=0&&vi<nodes.length))];
   return(
     <div style={{display:"flex",flexDirection:"column"}}>
       {nodes.map((u,i)=>{
         if(!visibleIndexes.includes(i)) return null;
-        const st=flowStates[String(i)]||"Pendiente";const fc=FS_CFG[st];const isLast=i===nodes.length-1;const isLastVisible=i===visibleIndexes[visibleIndexes.length-1];
+        const st=flowStates[sids[i]]||"Pendiente";const fc=FS_CFG[st];const isLast=i===nodes.length-1;const isLastVisible=i===visibleIndexes[visibleIndexes.length-1];
         const isPulse=nextIdx>0&&i===nextIdx&&st==="Pendiente";
-        const note=nodeNotes?.[String(i)]||"";
+        const note=nodeNotes?.[sids[i]]||"";
         const LIMIT=80;
         const noteIsLong=note.length>LIMIT;
         const noteExpanded=!!expandedNotes[i];
         const nodeCanChange=canChangeState||(canChangeOwnStep&&myInvIndex===i);
         const nodeCanEditNote=canEditNotes||(canChangeOwnStep&&myInvIndex===i);
-        const nodeAttachments=(attachments||[]).filter(a=>String(a.nodeIndex)===String(i));
+        const nodeAttachments=(attachments||[]).filter(a=>String(a.nodeIndex)===String(sids[i]));
         return(
           <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"flex-start"}}>
             <div className={isPulse?"fn-pulse":""} style={{display:"flex",flexDirection:"column",width:"100%",background:isPulse?"#EEF2FF":fc.bg,border:`1.5px solid ${isPulse?"#4338CA44":fc.c+"33"}`,borderRadius:10,padding:"12px 16px"}}>
@@ -514,7 +544,7 @@ function FlowDiagram({invIds,flowStates,onReorder,onStateChange,canReorder,canCh
                 {nodeCanChange?(
                   <div style={{display:"flex",gap:4,flexWrap:"wrap",justifyContent:"flex-end",flexShrink:0}}>
                     {Object.entries(FS_CFG).map(([s,c])=>(
-                      <button key={s} onClick={()=>onStateChange(String(i),s)}
+                      <button key={s} onClick={()=>onStateChange(sids[i],s)}
                         style={{background:st===s?c.c:CARD,color:st===s?"#fff":c.c,border:`1px solid ${c.c}`,padding:"4px 10px",borderRadius:20,cursor:"pointer",fontSize:11,fontWeight:600,transition:"all .1s"}}>
                         {c.icon} {s}
                       </button>
@@ -540,15 +570,15 @@ function FlowDiagram({invIds,flowStates,onReorder,onStateChange,canReorder,canCh
                 <div style={{width:"100%",marginTop:8}}>
                   {nodeCanEditNote?(
                     <textarea
-                      value={getNoteVal(String(i))}
+                      value={getNoteVal(i)}
                       onChange={e=>{
-                        setEditNotes(p=>({...p,[String(i)]:e.target.value}));
+                        setEditNotes(p=>({...p,[i]:e.target.value}));
                         e.target.style.height="auto";
                         e.target.style.height=e.target.scrollHeight+"px";
                       }}
                       onBlur={()=>{
-                        const val=editNotes[String(i)];
-                        if(val!==undefined&&val!==(nodeNotes?.[String(i)]||"")) onNoteChange(String(i),val);
+                        const val=editNotes[i];
+                        if(val!==undefined&&val!==(nodeNotes?.[sids[i]]||"")) onNoteChange(sids[i],val);
                       }}
                       rows={2}
                       placeholder="Nota para esta etapa..."
@@ -763,7 +793,8 @@ function ScreenDashboard({tasks,user,onStatClick,onDeptClick,onPickerDeptClick,o
         if(t.responsible?.id===m.id) return true;
         const idx=(t.invIds||[]).indexOf(m.id);
         if(idx===-1) return false;
-        return (t.flowStates?.[String(idx)]||"Pendiente")!=="Completado";
+        const sids=getStageIds(t.invIds||[],t.flowStageIds);
+        return (t.flowStates?.[sids[idx]]||"Pendiente")!=="Completado";
       }).length;
       return{...m,taskCount};
     });
@@ -982,14 +1013,19 @@ function ScreenDashboard({tasks,user,onStatClick,onDeptClick,onPickerDeptClick,o
    SCREEN: MIS TAREAS
 ════════════════════════════════════════ */
 function ScreenMyTasks({tasks,user,onBack,onTaskClick}){
-  const [tab,setTab]=useState("resp");
+  const [tab,setTab]=useState("active");
   const isMobile=useIsMobile();
+  const prioOrder={Alta:0,Media:1,Baja:2};
 
-  const respTasks=useMemo(()=>tasks.filter(t=>t.responsible?.id===user.id&&isActive(t)).sort((a,b)=>({Alta:0,Media:1,Baja:2}[a.priority]||1)-({Alta:0,Media:1,Baja:2}[b.priority]||1)),[tasks,user]);
-  const invTasks =useMemo(()=>tasks.filter(t=>(t.invIds||[]).includes(user.id)&&t.responsible?.id!==user.id&&isActive(t)).sort((a,b)=>({Alta:0,Media:1,Baja:2}[a.priority]||1)-({Alta:0,Media:1,Baja:2}[b.priority]||1)),[tasks,user]);
-  const doneTasks=useMemo(()=>tasks.filter(t=>t.responsible?.id===user.id&&t.status==="Completada"),[tasks,user]);
+  const respTasks=useMemo(()=>tasks.filter(t=>t.responsible?.id===user.id&&isActive(t)),[tasks,user]);
+  const invTasks =useMemo(()=>tasks.filter(t=>(t.invIds||[]).includes(user.id)&&t.responsible?.id!==user.id&&isActive(t)),[tasks,user]);
+  const activeTasks=useMemo(()=>[
+    ...respTasks.map(t=>({t,role:"Responsable"})),
+    ...invTasks.map(t=>({t,role:"Involucrado"})),
+  ].sort((a,b)=>(prioOrder[a.t.priority]??1)-(prioOrder[b.t.priority]??1)),[respTasks,invTasks]);
+  const doneTasks=useMemo(()=>tasks.filter(t=>t.responsible?.id===user.id&&t.status==="Completada").map(t=>({t,role:"Responsable"})),[tasks,user]);
 
-  const list=tab==="resp"?respTasks:tab==="inv"?invTasks:doneTasks;
+  const list=tab==="active"?activeTasks:doneTasks;
 
   return(
     <div style={{minHeight:"100vh",background:BG}}>
@@ -1003,11 +1039,10 @@ function ScreenMyTasks({tasks,user,onBack,onTaskClick}){
       />
       <div style={{maxWidth:900,margin:"0 auto",padding:"24px"}}>
         {/* Summary cards */}
-        <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(3,1fr)",gap:10,marginBottom:24}}>
+        <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(2,1fr)",gap:10,marginBottom:24}}>
           {[
-            {tab:"resp",label:"Soy responsable",v:respTasks.length,c:PR,bg:PRl},
-            {tab:"inv", label:"Soy involucrado", v:invTasks.length, c:"#059669",bg:"#ECFDF5"},
-            {tab:"done",label:"Completadas",      v:doneTasks.length,c:"#6B7280",bg:"#F9FAFB"},
+            {tab:"active",label:"Tareas activas",v:activeTasks.length,c:PR,bg:PRl},
+            {tab:"done",  label:"Completadas",    v:doneTasks.length,  c:"#6B7280",bg:"#F9FAFB"},
           ].map(s=>(
             <Card key={s.tab} cls="dc" sx={{padding:"14px 16px",borderTop:`2px solid ${s.c}`,cursor:"pointer",outline:tab===s.tab?`2px solid ${s.c}`:"none"}} onClick={()=>setTab(s.tab)}>
               <div style={{fontSize:24,fontWeight:700,color:s.c,lineHeight:1}}>{s.v}</div>
@@ -1018,7 +1053,7 @@ function ScreenMyTasks({tasks,user,onBack,onTaskClick}){
 
         {/* Tabs */}
         <div style={{display:"flex",gap:8,marginBottom:20}}>
-          {[["resp","Soy responsable"],["inv","Soy involucrado"],["done","Completadas"]].map(([v,l])=>(
+          {[["active","Activas"],["done","Completadas"]].map(([v,l])=>(
             <button key={v} onClick={()=>setTab(v)}
               style={{background:tab===v?PR:CARD,color:tab===v?"#fff":T2,border:`1px solid ${tab===v?PR:BD}`,padding:"7px 14px",borderRadius:20,cursor:"pointer",fontSize:12,fontWeight:500,transition:"all .12s"}}>
               {l}
@@ -1027,7 +1062,7 @@ function ScreenMyTasks({tasks,user,onBack,onTaskClick}){
         </div>
 
         {list.length===0&&<div style={{textAlign:"center",padding:"60px 0",color:T3,fontSize:14}}>Sin tareas en esta sección</div>}
-        {list.map(t=><TRow key={t.id} t={t} onClick={()=>onTaskClick(t)}/>)}
+        {list.map(({t,role})=><TRow key={t.id} t={t} roleBadge={role} onClick={()=>onTaskClick(t)}/>)}
       </div>
     </div>
   );
@@ -1637,6 +1672,8 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
   const [recErr,setRecErr]=useState(false);
   const [showBlockForm,setShowBlockForm]=useState(false);
   const [blockReason,setBlockReason]=useState("");
+  const [showCancelForm,setShowCancelForm]=useState(false);
+  const [cancelReason,setCancelReason]=useState("");
   const [showAllLog,setShowAllLog]=useState(false);
   const recRef=useRef(null);
   const task=useMemo(()=>tasks.find(t=>t.id===taskId)||null,[tasks,taskId]);
@@ -1656,7 +1693,7 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
     const c={user,text:comment,time:_now.toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"})+" "+_now.toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"}),iso:_now.toISOString()};
     onUpdate(taskId,{comments:[...(task?.comments||[]),c]});
     const recipientIds=[...new Set([...(task?.invIds||[]),task?.responsible?.id,task?.creator?.id].filter(Boolean))].filter(id=>id!==user?.id);
-    if(recipientIds.length>0) sendPushNotification(recipientIds,`💬 Nuevo comentario en: ${task?.title}`,`${user?.name}: ${comment.trim().slice(0,80)}${comment.trim().length>80?"…":""}`);
+    if(recipientIds.length>0) sendPushNotification(recipientIds,`💬 Nuevo comentario en: ${task?.title}`,`${user?.name}: ${comment.trim().slice(0,80)}${comment.trim().length>80?"…":""}`,`/?task=${taskId}`);
     setComment("");
   };
 
@@ -1669,13 +1706,14 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
   const canDelete=user?(user.dept==="Dirección"||task.creator?.id===user.id):false;
   const canEdit=canChangeState;
   const invIds=task.invIds||[];const flowStates=task.flowStates||{};
+  const flowStageIds=getStageIds(invIds,task.flowStageIds);
   const myInvIndex=user?invIds.indexOf(user.id):-1;
   const isInvolved=myInvIndex!==-1;
-  const prevDone=myInvIndex===0||["En proceso","Completado"].includes(flowStates[String(myInvIndex-1)]||"Pendiente");
+  const prevDone=myInvIndex===0||["En proceso","Completado"].includes(flowStates[flowStageIds[myInvIndex-1]]||"Pendiente");
   const canChangeOwnStep=isInvolved&&prevDone;
   const isLastNode=myInvIndex!==-1&&myInvIndex===invIds.length-1;
-  const lastNodeCompleted=isLastNode&&(flowStates[String(myInvIndex)]||"Pendiente")==="Completado";
-  const pct=calcProgress(invIds,flowStates);
+  const lastNodeCompleted=isLastNode&&(flowStates[flowStageIds[myInvIndex]]||"Pendiente")==="Completado";
+  const pct=calcProgress(invIds,flowStates,flowStageIds);
   const isMobile=useIsMobile();
 
   return(
@@ -1688,6 +1726,8 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
         center={null}
         right={<div style={{display:"flex",gap:8}}>
           {canEdit&&<button onClick={()=>onEdit(task)} style={{background:PRl,color:PR,border:`1px solid ${PR}`,padding:"7px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600}}>✏️ Editar</button>}
+          {canEdit&&user.dept==="Dirección"&&<button onClick={()=>{setShowBlockForm(true);setBlockReason("");setShowCancelForm(false);}} style={{background:"#FEF2F2",color:"#DC2626",border:"1px solid #FECACA",padding:"7px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600}}>🔒{isMobile?"":" Bloquear"}</button>}
+          {canEdit&&<button onClick={()=>{setShowCancelForm(true);setCancelReason("");setShowBlockForm(false);}} style={{background:"#F9FAFB",color:"#6B7280",border:"1px solid #E5E7EB",padding:"7px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600}}>✕{isMobile?"":" Cancelar"}</button>}
           {canDelete&&<button onClick={()=>onDelete(task)} style={{background:"#FEF2F2",color:"#DC2626",border:"1px solid #FECACA",padding:"7px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600}}>🗑️</button>}
         </div>}
       />
@@ -1722,7 +1762,63 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
           {task.status==="Bloqueada"&&task.blockReason&&(
             <div style={{display:"flex",gap:10,alignItems:"flex-start",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:8,padding:"10px 14px",marginBottom:10}}>
               <span style={{fontSize:16,flexShrink:0}}>🔒</span>
-              <div><div style={{fontSize:11,fontWeight:700,color:"#DC2626",marginBottom:2}}>Razón de bloqueo</div><p style={{fontSize:13,color:"#991B1B",lineHeight:1.5,margin:0}}>{task.blockReason}</p></div>
+              <div>
+                <div style={{fontSize:11,fontWeight:700,color:"#DC2626",marginBottom:2}}>Razón de bloqueo{task.blockedBy?` — ${task.blockedBy}`:""}{task.blockedAt?` · ${new Date(task.blockedAt).toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"})}`:""}</div>
+                <p style={{fontSize:13,color:"#991B1B",lineHeight:1.5,margin:0}}>{task.blockReason}</p>
+              </div>
+            </div>
+          )}
+          {task.status==="Cancelada"&&task.cancelReason&&(
+            <div style={{display:"flex",gap:10,alignItems:"flex-start",background:"#F9FAFB",border:"1px solid #E5E7EB",borderRadius:8,padding:"10px 14px",marginBottom:10}}>
+              <span style={{fontSize:16,flexShrink:0}}>✕</span>
+              <div>
+                <div style={{fontSize:11,fontWeight:700,color:"#6B7280",marginBottom:2}}>Razón de cancelación{task.canceledBy?` — ${task.canceledBy}`:""}{task.canceledAt?` · ${new Date(task.canceledAt).toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"})}`:""}</div>
+                <p style={{fontSize:13,color:T2,lineHeight:1.5,margin:0}}>{task.cancelReason}</p>
+              </div>
+            </div>
+          )}
+          {showBlockForm&&(
+            <div style={{background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:10,padding:14,marginBottom:10}}>
+              <div style={{fontSize:12,fontWeight:700,color:"#DC2626",marginBottom:8}}>Razón del bloqueo *</div>
+              <textarea value={blockReason} onChange={e=>setBlockReason(e.target.value)} rows={2}
+                placeholder="Explica por qué se bloquea esta tarea..."
+                style={{...inp,borderRadius:6,fontSize:12,marginBottom:10}}/>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={()=>{
+                  if(!blockReason.trim()) return;
+                  onUpdate(taskId,{status:"Bloqueada",blockReason:blockReason.trim(),blockedBy:user.name,blockedById:user.id,blockedAt:new Date().toISOString()});
+                  setShowBlockForm(false);
+                }} disabled={!blockReason.trim()}
+                  style={{background:blockReason.trim()?"#DC2626":"#E2E8F0",color:blockReason.trim()?"#fff":T3,border:"none",padding:"8px 16px",borderRadius:8,cursor:blockReason.trim()?"pointer":"not-allowed",fontSize:12,fontWeight:700}}>
+                  Confirmar bloqueo
+                </button>
+                <button onClick={()=>setShowBlockForm(false)}
+                  style={{background:CARD,border:`1px solid ${BD}`,color:T2,padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:12}}>
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
+          {showCancelForm&&(
+            <div style={{background:"#F9FAFB",border:"1px solid #E5E7EB",borderRadius:10,padding:14,marginBottom:10}}>
+              <div style={{fontSize:12,fontWeight:700,color:"#6B7280",marginBottom:8}}>Razón de la cancelación *</div>
+              <textarea value={cancelReason} onChange={e=>setCancelReason(e.target.value)} rows={2}
+                placeholder="Explica por qué se cancela esta tarea..."
+                style={{...inp,borderRadius:6,fontSize:12,marginBottom:10}}/>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={()=>{
+                  if(!cancelReason.trim()) return;
+                  onUpdate(taskId,{status:"Cancelada",cancelReason:cancelReason.trim(),canceledBy:user.name,canceledById:user.id,canceledAt:new Date().toISOString()});
+                  setShowCancelForm(false);
+                }} disabled={!cancelReason.trim()}
+                  style={{background:cancelReason.trim()?"#6B7280":"#E2E8F0",color:"#fff",border:"none",padding:"8px 16px",borderRadius:8,cursor:cancelReason.trim()?"pointer":"not-allowed",fontSize:12,fontWeight:700}}>
+                  Confirmar cancelación
+                </button>
+                <button onClick={()=>setShowCancelForm(false)}
+                  style={{background:CARD,border:`1px solid ${BD}`,color:T2,padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:12}}>
+                  Cerrar
+                </button>
+              </div>
             </div>
           )}
           <h2 style={{fontSize:20,fontWeight:700,color:T1,marginBottom:8}}>{task.title}</h2>
@@ -1763,38 +1859,13 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
               <Card sx={{padding:18}}>
                 <Lbl ch="CAMBIAR ESTADO"/>
                 <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                  {Object.entries(SC).filter(([s])=>s!=="Bloqueada"||user.dept==="Dirección").map(([s,c])=>(
-                    <button key={s} onClick={()=>{
-                      if(s==="Bloqueada"){setShowBlockForm(true);setBlockReason("");}
-                      else{onUpdate(taskId,{status:s});setShowBlockForm(false);}
-                    }}
+                  {Object.entries(SC).filter(([s])=>s!=="Bloqueada"&&s!=="Cancelada").map(([s,c])=>(
+                    <button key={s} onClick={()=>{onUpdate(taskId,{status:s});}}
                       style={{background:task.status===s?c.c:CARD,color:task.status===s?"#fff":c.c,border:`1.5px solid ${c.c}`,padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600,transition:"all .12s"}}>
                       {s}
                     </button>
                   ))}
                 </div>
-                {showBlockForm&&(
-                  <div style={{marginTop:12,background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:10,padding:14}}>
-                    <div style={{fontSize:12,fontWeight:700,color:"#DC2626",marginBottom:8}}>Razón del bloqueo *</div>
-                    <textarea value={blockReason} onChange={e=>setBlockReason(e.target.value)} rows={2}
-                      placeholder="Explica por qué se bloquea esta tarea..."
-                      style={{...inp,borderRadius:6,fontSize:12,marginBottom:10}}/>
-                    <div style={{display:"flex",gap:8}}>
-                      <button onClick={()=>{
-                        if(!blockReason.trim()) return;
-                        onUpdate(taskId,{status:"Bloqueada",blockReason:blockReason.trim()});
-                        setShowBlockForm(false);
-                      }} disabled={!blockReason.trim()}
-                        style={{background:blockReason.trim()?"#DC2626":"#E2E8F0",color:blockReason.trim()?"#fff":T3,border:"none",padding:"8px 16px",borderRadius:8,cursor:blockReason.trim()?"pointer":"not-allowed",fontSize:12,fontWeight:700}}>
-                        Confirmar bloqueo
-                      </button>
-                      <button onClick={()=>setShowBlockForm(false)}
-                        style={{background:CARD,border:`1px solid ${BD}`,color:T2,padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:12}}>
-                        Cancelar
-                      </button>
-                    </div>
-                  </div>
-                )}
               </Card>
             )}
             {/* Mobile: Responsable + FechaLimite above flow */}
@@ -1806,25 +1877,27 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
                 <Lbl ch="DIAGRAMA DE FLUJO — INVOLUCRADOS"/>
                 {canReorder&&<span style={{fontSize:11,color:T3}}>↑↓ para reordenar</span>}
               </div>
-              <FlowDiagram invIds={invIds} flowStates={flowStates}
-                onReorder={ids=>onUpdate(taskId,{invIds:ids})}
-                onStateChange={(uid,newSt)=>{
-                  const prev=flowStates[uid]||"Pendiente";
+              <FlowDiagram invIds={invIds} flowStates={flowStates} flowStageIds={flowStageIds}
+                onReorder={(ids,sids)=>onUpdate(taskId,{invIds:ids,flowStageIds:sids})}
+                onStateChange={(sid,newSt)=>{
+                  const prev=flowStates[sid]||"Pendiente";
                   if(prev===newSt) return;
                   const _n=new Date();
+                  const idx=flowStageIds.indexOf(sid);
+                  const targetId=idx!==-1?invIds[idx]:null;
                   const entry={
                     userId:user.id,userName:user.name,userIni:user.ini,userUc:user.uc,
-                    targetId:uid,targetName:USERS.find(u=>u.id===uid)?.name||"",
+                    targetId,targetName:USERS.find(u=>u.id===targetId)?.name||"",
                     prevState:prev,newState:newSt,
                     time:_n.toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"})+" "+_n.toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"}),
                   };
-                  onUpdate(taskId,{flowStates:{...flowStates,[uid]:newSt},flowLog:[...(task.flowLog||[]),entry]});
+                  onUpdate(taskId,{flowStates:{...flowStates,[sid]:newSt},flowLog:[...(task.flowLog||[]),entry]});
                 }}
                 canReorder={canReorder} canChangeState={canChangeState}
                 myInvIndex={myInvIndex}
                 canChangeOwnStep={canChangeOwnStep}
                 nodeNotes={task.nodeNotes||{}}
-                onNoteChange={(uid,val)=>onUpdate(taskId,{nodeNotes:{...(task.nodeNotes||{}),[uid]:val}})}
+                onNoteChange={(sid,val)=>onUpdate(taskId,{nodeNotes:{...(task.nodeNotes||{}),[sid]:val}})}
                 canEditNotes={canReorder}
                 attachments={task.attachments||[]}
                 taskId={task.id}
@@ -1837,7 +1910,7 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
                 <Lbl ch="ARCHIVOS ADJUNTOS"/>
                 <div style={{display:"flex",flexDirection:"column",gap:14}}>
                   {invIds.map((uid,idx)=>{
-                    const nodeAtts=(task.attachments||[]).filter(a=>String(a.nodeIndex)===String(idx));
+                    const nodeAtts=(task.attachments||[]).filter(a=>String(a.nodeIndex)===String(flowStageIds[idx]));
                     if(nodeAtts.length===0) return null;
                     const nodeUser=USERS.find(x=>x.id===uid);
                     return(
@@ -1988,25 +2061,31 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
 function ScreenCreate({user,taskCount,onSave,onCancel,defaultDept,taskToEdit,saveError}){
   const isEdit=!!taskToEdit;
   const [form,setForm]=useState(()=>{
-    if(isEdit) return{type:taskToEdit.type||"",title:taskToEdit.title||"",description:taskToEdit.description||"",respId:taskToEdit.responsible?String(taskToEdit.responsible.id):"",invIds:taskToEdit.invIds||[],deadline:taskToEdit.deadline||"",priority:taskToEdit.priority||"Media",origin:taskToEdit.origin||"Sistema",notes:taskToEdit.notes||"",originDept:taskToEdit.originDept||taskToEdit.creator?.dept||user.dept,notifyOnComplete:taskToEdit.notifyOnComplete||[]};
+    if(isEdit) return{type:taskToEdit.type||"",title:taskToEdit.title||"",description:taskToEdit.description||"",respId:taskToEdit.responsible?String(taskToEdit.responsible.id):"",invIds:taskToEdit.invIds||[],flowStageIds:getStageIds(taskToEdit.invIds||[],taskToEdit.flowStageIds),deadline:taskToEdit.deadline||"",priority:taskToEdit.priority||"Media",origin:taskToEdit.origin||"Sistema",notes:taskToEdit.notes||"",originDept:taskToEdit.originDept||taskToEdit.creator?.dept||user.dept,notifyOnComplete:taskToEdit.notifyOnComplete||[]};
     const dr=defaultDept?USERS.find(u=>u.dept===defaultDept):null;
-    return{...BLANK,respId:dr?String(dr.id):"",originDept:user.dept};
+    return{...BLANK,flowStageIds:[],respId:dr?String(dr.id):"",originDept:user.dept};
   });
   const isMobile=useIsMobile();
+  const [insertAt,setInsertAt]=useState(null);
 
-  const addInv=id=>setForm(p=>({...p,invIds:[...p.invIds,id]}));
-  const removeInvAt=i=>setForm(p=>({...p,invIds:p.invIds.filter((_,idx)=>idx!==i)}));
+  const addInv=id=>setForm(p=>({...p,invIds:[...p.invIds,id],flowStageIds:[...p.flowStageIds,genStageId()]}));
+  const insertInvAt=(i,id)=>setForm(p=>{
+    const invIds=[...p.invIds];invIds.splice(i,0,id);
+    const flowStageIds=[...p.flowStageIds];flowStageIds.splice(i,0,genStageId());
+    return{...p,invIds,flowStageIds};
+  });
+  const removeInvAt=i=>setForm(p=>({...p,invIds:p.invIds.filter((_,idx)=>idx!==i),flowStageIds:p.flowStageIds.filter((_,idx)=>idx!==i)}));
   const canSave=form.type&&form.title&&form.respId&&form.deadline&&(form.notifyOnComplete||[]).length>0;
   const [saving, setSaving] = useState(false);
 
   const doSave = async () => {
     if(!canSave || saving) return;
     setSaving(true);
-    const fs = form.invIds.reduce((acc,id,idx)=>({...acc,[String(idx)]:isEdit?(taskToEdit.flowStates?.[String(idx)]||"Pendiente"):"Pendiente"}),{});
+    const fs = form.flowStageIds.reduce((acc,sid)=>({...acc,[sid]:isEdit?(taskToEdit.flowStates?.[sid]||"Pendiente"):"Pendiente"}),{});
     const now = new Date().toISOString();
     const taskData = isEdit
-      ? {type:form.type,title:form.title,description:form.description,notes:form.notes,originDept:form.originDept,responsible:USERS.find(u=>u.id===parseInt(form.respId)),invIds:form.invIds,flowStates:fs,deadline:form.deadline,priority:form.priority,origin:form.origin,notifyOnComplete:form.notifyOnComplete}
-      : {id:`TSK-${Date.now().toString(36).toUpperCase().slice(-6)}`,type:form.type,title:form.title,description:form.description,notes:form.notes,originDept:form.originDept,creator:user,responsible:USERS.find(u=>u.id===parseInt(form.respId)),invIds:form.invIds,flowStates:fs,deadline:form.deadline,priority:form.priority,origin:form.origin,status:"Pendiente",comments:[],confirmed:[],createdAt:now,notifyOnComplete:form.notifyOnComplete};
+      ? {type:form.type,title:form.title,description:form.description,notes:form.notes,originDept:form.originDept,responsible:USERS.find(u=>u.id===parseInt(form.respId)),invIds:form.invIds,flowStageIds:form.flowStageIds,flowStates:fs,deadline:form.deadline,priority:form.priority,origin:form.origin,notifyOnComplete:form.notifyOnComplete}
+      : {id:`TSK-${Date.now().toString(36).toUpperCase().slice(-6)}`,type:form.type,title:form.title,description:form.description,notes:form.notes,originDept:form.originDept,creator:user,responsible:USERS.find(u=>u.id===parseInt(form.respId)),invIds:form.invIds,flowStageIds:form.flowStageIds,flowStates:fs,deadline:form.deadline,priority:form.priority,origin:form.origin,status:"Pendiente",comments:[],confirmed:[],createdAt:now,notifyOnComplete:form.notifyOnComplete};
     try {
       await onSave(taskData);
     } catch(err) {
@@ -2059,23 +2138,36 @@ function ScreenCreate({user,taskCount,onSave,onCancel,defaultDept,taskToEdit,sav
             </div>
           </div>
           <div><Lbl ch={`INVOLUCRADOS — orden de flujo (${form.invIds.length})`}/>
-            <div style={{fontSize:11,color:T3,marginBottom:8}}>El orden de selección define el flujo de seguimiento.</div>
-            {form.invIds.length>0&&<div style={{background:BG,borderRadius:8,padding:"10px 12px",marginBottom:10,display:"flex",gap:6,flexWrap:"wrap"}}>
+            <div style={{fontSize:11,color:T3,marginBottom:8}}>El orden de selección define el flujo de seguimiento. Usa "+" para insertar a alguien en una posición intermedia sin perder las notas ya capturadas.</div>
+            {form.invIds.length>0&&<div style={{background:BG,borderRadius:8,padding:"10px 12px",marginBottom:10,display:"flex",gap:4,flexWrap:"wrap",alignItems:"center"}}>
               {form.invIds.map((id,i)=>{const u=USERS.find(x=>x.id===id);if(!u) return null;return(
-                <div key={i} style={{display:"flex",alignItems:"center",gap:6,background:CARD,border:`1px solid ${u.uc}`,borderRadius:20,padding:"4px 10px"}}>
-                  <div style={{width:18,height:18,borderRadius:"50%",background:u.uc,display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{color:"#fff",fontSize:9,fontWeight:700}}>{i+1}</span></div>
-                  <span style={{fontSize:12,color:T1,fontWeight:500}}>{shortName(u.name)}</span>
-                  <button onClick={()=>removeInvAt(i)} style={{background:"none",border:"none",color:T3,cursor:"pointer",fontSize:14,lineHeight:1,padding:"0 2px"}}>×</button>
-                </div>
+                <Fragment key={i}>
+                  <button onClick={()=>setInsertAt(i)} title="Insertar aquí" style={{background:insertAt===i?PR:CARD,color:insertAt===i?"#fff":T3,border:`1px dashed ${insertAt===i?PR:BD}`,borderRadius:"50%",width:20,height:20,cursor:"pointer",fontSize:12,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>+</button>
+                  <div style={{display:"flex",alignItems:"center",gap:6,background:CARD,border:`1px solid ${u.uc}`,borderRadius:20,padding:"4px 10px"}}>
+                    <div style={{width:18,height:18,borderRadius:"50%",background:u.uc,display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{color:"#fff",fontSize:9,fontWeight:700}}>{i+1}</span></div>
+                    <span style={{fontSize:12,color:T1,fontWeight:500}}>{shortName(u.name)}</span>
+                    <button onClick={()=>removeInvAt(i)} style={{background:"none",border:"none",color:T3,cursor:"pointer",fontSize:14,lineHeight:1,padding:"0 2px"}}>×</button>
+                  </div>
+                </Fragment>
               );})}
+              <button onClick={()=>setInsertAt(form.invIds.length)} title="Insertar al final" style={{background:insertAt===form.invIds.length?PR:CARD,color:insertAt===form.invIds.length?"#fff":T3,border:`1px dashed ${insertAt===form.invIds.length?PR:BD}`,borderRadius:"50%",width:20,height:20,cursor:"pointer",fontSize:12,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>+</button>
             </div>}
+            {insertAt!==null&&(
+              <div style={{display:"flex",alignItems:"center",gap:8,background:PRl,border:`1px solid ${PR}`,borderRadius:8,padding:"8px 12px",marginBottom:10}}>
+                <span style={{fontSize:12,color:PR,fontWeight:600}}>Elige a quién insertar en la posición {insertAt+1}</span>
+                <button onClick={()=>setInsertAt(null)} style={{marginLeft:"auto",background:"none",border:"none",color:PR,cursor:"pointer",fontSize:12,fontWeight:600}}>Cancelar</button>
+              </div>
+            )}
             <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(2,1fr)",gap:"14px 16px"}}>
               {USERS_BY_DEPT.map(g=>(
                 <div key={g.dept}>
                   <div style={{fontSize:10,fontWeight:600,color:T3,letterSpacing:.5,textTransform:"uppercase",marginBottom:6}}>{g.dept}</div>
                   <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
                     {g.users.map(u=>{const count=form.invIds.filter(id=>id===u.id).length;const sel=count>0;const isMe=u.id===user.id;return(
-                      <button key={u.id} onClick={()=>addInv(u.id)} style={{background:sel?u.uc+"15":CARD,color:sel?u.uc:T2,border:`1.5px solid ${sel?u.uc:BD}`,padding:"7px 12px",borderRadius:20,cursor:"pointer",fontSize:12,fontWeight:sel?700:400,display:"flex",alignItems:"center",gap:6,transition:"all .12s"}}>
+                      <button key={u.id} onClick={()=>{
+                        if(insertAt!==null){insertInvAt(insertAt,u.id);setInsertAt(null);}
+                        else addInv(u.id);
+                      }} style={{background:sel?u.uc+"15":CARD,color:sel?u.uc:T2,border:`1.5px solid ${sel?u.uc:BD}`,padding:"7px 12px",borderRadius:20,cursor:"pointer",fontSize:12,fontWeight:sel?700:400,display:"flex",alignItems:"center",gap:6,transition:"all .12s"}}>
                         {sel&&<span style={{background:u.uc,color:"#fff",borderRadius:"50%",width:16,height:16,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:700}}>{count}</span>}
                         <span>{isMe?"Yo mismo":shortName(u.name)}</span>
                       </button>
@@ -2119,7 +2211,7 @@ function ScreenCreate({user,taskCount,onSave,onCancel,defaultDept,taskToEdit,sav
 /* ════════════════════════════════════════
    SCREEN: AVISOS
 ════════════════════════════════════════ */
-function ScreenAviso({user,avisos,onSend,onMarkRead,onBack,initialSelected}){
+function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onBack,initialSelected}){
   const [tab,setTab]=useState("inbox");
   const [dests,setDests]=useState([]);
   const [texto,setTexto]=useState("");
@@ -2128,6 +2220,7 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onBack,initialSelected}){
   const [draftId,setDraftId]=useState(()=>`AV-${Date.now()}`);
   const [uploadingAttach,setUploadingAttach]=useState(false);
   const [attachErr,setAttachErr]=useState(null);
+  const [commentText,setCommentText]=useState("");
   const isMobile=useIsMobile();
 
   const myAvisos=useMemo(()=>
@@ -2182,6 +2275,25 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onBack,initialSelected}){
     const{data,error}=await supabase.storage.from("task-attachments").createSignedUrl(att.url,60);
     if(error){alert("No se pudo generar el enlace de descarga: "+error.message);return;}
     window.open(data.signedUrl,"_blank");
+  };
+
+  const postAvisoComment=()=>{
+    if(!commentText.trim()||!selectedAviso) return;
+    const a=selectedAviso;
+    const newComment={text:commentText.trim(),authorId:user.id,authorName:user.name,iso:new Date().toISOString()};
+    const updated={...a,comments:[...(a.comments||[]),newComment]};
+    setSelectedAviso(updated);
+    setCommentText("");
+    if(onUpdateAviso) onUpdateAviso(a.id,updated);
+    const words=a.texto.split(" ").slice(0,6).join(" ");
+    const pushTitle=`💬 Nuevo comentario en aviso: ${words}${a.texto.split(" ").length>6?"...":""}`;
+    let recipientIds;
+    if(a.destinatarioId==="todos"){
+      recipientIds=USERS.map(u=>u.id).filter(id=>id!==user.id);
+    } else {
+      recipientIds=[a.origen?.id,a.destinatarioId].filter(id=>id&&id!==user.id);
+    }
+    if(recipientIds.length>0) sendPushNotification(recipientIds,pushTitle,newComment.text,`/?aviso=${a.id}`);
   };
 
   const send=()=>{
@@ -2275,6 +2387,40 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onBack,initialSelected}){
                   </div>
                 </div>
               )}
+              <div>
+                <Lbl ch="COMENTARIOS"/>
+                <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:10}}>
+                  {(a.comments||[]).length===0&&(
+                    <div style={{fontSize:12,color:T3,fontStyle:"italic"}}>Sin comentarios aún.</div>
+                  )}
+                  {(a.comments||[]).map((c,ci)=>(
+                    <div key={ci} style={{background:BG,borderRadius:8,padding:"10px 12px",border:`1px solid ${BD}`}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                        <span style={{fontSize:12,fontWeight:700,color:T1}}>{c.authorName}</span>
+                        <span style={{fontSize:10,color:T3}}>{fmtFecha(c.iso)}</span>
+                      </div>
+                      <p style={{margin:0,fontSize:13,color:T1,lineHeight:1.6,whiteSpace:"pre-wrap"}}>{c.text}</p>
+                    </div>
+                  ))}
+                </div>
+                <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
+                  <textarea
+                    value={commentText}
+                    onChange={e=>setCommentText(e.target.value)}
+                    placeholder="Escribe un comentario..."
+                    rows={2}
+                    style={{flex:1,borderRadius:8,border:`1px solid ${BD}`,padding:"8px 12px",fontSize:13,color:T1,background:BG,resize:"vertical",fontFamily:"inherit",outline:"none"}}
+                    onKeyDown={e=>{if(e.key==="Enter"&&(e.ctrlKey||e.metaKey)){e.preventDefault();postAvisoComment();}}}
+                  />
+                  <button
+                    onClick={postAvisoComment}
+                    disabled={!commentText.trim()}
+                    style={{background:commentText.trim()?PR:"#ccc",color:"#fff",border:"none",borderRadius:8,padding:"8px 14px",cursor:commentText.trim()?"pointer":"default",fontSize:13,fontWeight:600,fontFamily:"inherit",flexShrink:0,alignSelf:"flex-end"}}>
+                    Enviar
+                  </button>
+                </div>
+                <div style={{fontSize:10,color:T3,marginTop:4}}>Ctrl+Enter para enviar</div>
+              </div>
             </div>
           </Card>
         </div>
@@ -2530,11 +2676,12 @@ function ScreenStuckTasks({tasks,user,onBack,onTaskClick}){
       if(t.status==="Completada"||t.status==="Cancelada") return;
       const invIds=t.invIds||[];
       const flowStates=t.flowStates||{};
+      const sids=getStageIds(invIds,t.flowStageIds);
       for(let i=0;i<invIds.length;i++){
-        const st=flowStates[String(i)]||"Pendiente";
+        const st=flowStates[sids[i]]||"Pendiente";
         if(st!=="Pendiente") continue;
         const isFirst=i===0;
-        const prevDone=i>0&&(flowStates[String(i-1)]||"Pendiente")==="Completado";
+        const prevDone=i>0&&(flowStates[sids[i-1]]||"Pendiente")==="Completado";
         if(isFirst||prevDone){
           result.push({task:t,nodeIndex:i,stuckUser:USERS.find(u=>u.id===invIds[i])||null});
           break;
@@ -2781,7 +2928,7 @@ export default function App(){
   const [selAviso,    setSelAviso]   = useState(null);
   const [fromScr,     setFromScr]    = useState("dash");
   const [filter,      setFilter]     = useState(null);
-  const [authedDepts, setAuthedDepts]= useState([]);
+  const [authedDepts, setAuthedDepts]= useState(()=>{try{return JSON.parse(sessionStorage.getItem("taskops_authed_depts"))||[];}catch{return [];}});
   const [pwdModal,    setPwdModal]   = useState(null);
   const [deptCanAdd,  setDeptCanAdd] = useState(false);
   const [createDept,  setCreateDept] = useState(null);
@@ -2793,6 +2940,13 @@ export default function App(){
   const [deletedTasks,  setDeletedTasks] = useState([]);
   const [saveError,     setSaveError]    = useState(null);
   const [lastNotifView, setLastNotifView]= useState(()=>localStorage.getItem("taskops_last_notif_view")||null);
+
+  // Persistir authedDepts en sessionStorage: un reload (ej. tras actualizar el
+  // Service Worker) no debe forzar a re-meter la contraseña de departamento
+  // si ya se autenticó en esta misma sesión del navegador.
+  useEffect(()=>{
+    try{sessionStorage.setItem("taskops_authed_depts",JSON.stringify(authedDepts));}catch(e){}
+  },[authedDepts]);
 
   // Supabase avisos: carga + realtime
   useEffect(()=>{
@@ -2811,6 +2965,40 @@ export default function App(){
       })
       .subscribe();
     return ()=>supabase.removeChannel(ch);
+  },[]);
+
+  // Service Worker: registrar y detectar actualizaciones, sin interrumpir
+  // al usuario a media tarea (ej. mientras llena el formulario de crear tarea).
+  useEffect(()=>{
+    if(!("serviceWorker" in navigator)) return;
+    // Registrar SW incondicionalmente (no solo cuando push está habilitado)
+    navigator.serviceWorker.register("/sw.js",{scope:"/"})
+      .catch(err=>console.warn("[SW] Error al registrar:",err));
+    // hadController: true si ya había un SW controlando esta página al cargar
+    // Solo recargamos en ACTUALIZACIONES, no en la primera instalación
+    const hadController=!!navigator.serviceWorker.controller;
+    let reloading=false;
+    let pendingUpdate=false;
+    const doReload=()=>{
+      if(reloading) return;
+      reloading=true;
+      console.log("[SW] Aplicando actualización — recargando");
+      window.location.reload();
+    };
+    navigator.serviceWorker.addEventListener("controllerchange",()=>{
+      if(!hadController||reloading) return;
+      pendingUpdate=true;
+      // Si nadie está mirando la pestaña, aplicar de inmediato no interrumpe a nadie.
+      // Si la app está en uso, esperar a que el usuario la deje en segundo plano
+      // o decida actualizar manualmente, en vez de recargarla debajo de sus manos.
+      if(document.visibilityState==="hidden") doReload();
+      else showUpdateBanner();
+    });
+    const onVisChange=()=>{
+      if(pendingUpdate&&document.visibilityState==="hidden") doReload();
+    };
+    document.addEventListener("visibilitychange",onVisChange);
+    return ()=>document.removeEventListener("visibilitychange",onVisChange);
   },[]);
 
   // Supabase: carga inicial + suscripción en tiempo real
@@ -2911,6 +3099,19 @@ export default function App(){
     }
   },[dbReady,tasks]); // eslint-disable-line
 
+  // Deep-link: abrir aviso desde URL ?aviso=
+  useEffect(()=>{
+    if(!dbReady||!avisos.length) return;
+    const params=new URLSearchParams(window.location.search);
+    const avisoId=params.get("aviso");
+    if(!avisoId) return;
+    const aviso=avisos.find(a=>a.id===avisoId);
+    if(!aviso) return;
+    window.history.replaceState({},"",window.location.pathname);
+    setSelAviso(aviso);
+    setScreen("avisos");
+  },[dbReady,avisos]); // eslint-disable-line
+
   // Operaciones CRUD
   const updateTask=(id,patch)=>{
     setTasks(prev=>{
@@ -2929,26 +3130,27 @@ export default function App(){
         });
       // Push: responsable cambiado
       if(patch.responsible?.id&&patch.responsible.id!==task.responsible?.id){
-        setTimeout(()=>sendPushNotification([patch.responsible.id],"Eres el responsable",`Te asignaron como responsable de: "${task.title}"`),0);
+        setTimeout(()=>sendPushNotification([patch.responsible.id],"Eres el responsable",`Te asignaron como responsable de: "${task.title}"`,`/?task=${task.id}`),0);
       }
       // Push: involucrados nuevos agregados
       if(patch.invIds&&user){
         const newInv=patch.invIds.filter(id=>!(task.invIds||[]).includes(id)&&id!==user.id);
-        if(newInv.length>0) setTimeout(()=>sendPushNotification(newInv,"Fuiste agregado a una tarea",`"${task.title}"`),0);
+        if(newInv.length>0) setTimeout(()=>sendPushNotification(newInv,"Fuiste agregado a una tarea",`"${task.title}"`,`/?task=${task.id}`),0);
       }
       // Push: nodo de flujo marcado Completado → notificar al siguiente involucrado
       if(patch.flowStates){
         const srcIds=patch.invIds||task.invIds||[];
+        const srcSids=getStageIds(srcIds,patch.flowStageIds||task.flowStageIds);
         Object.entries(patch.flowStates).forEach(([uid,newSt])=>{
           const prevSt=(task.flowStates||{})[uid]||"Pendiente";
           if(newSt==="Completado"&&prevSt!=="Completado"){
-            const posIdx=Number(uid);
+            const posIdx=srcSids.indexOf(uid);
             if(posIdx>=0&&posIdx<srcIds.length-1){
               const nextId=srcIds[posIdx+1];
               const who=USERS.find(u=>u.id===srcIds[posIdx]);
-              setTimeout(()=>sendPushNotification([nextId],"Tu turno en el flujo",`${who?.name||"Un colega"} completó su paso en "${task.title}"`),0);
+              setTimeout(()=>sendPushNotification([nextId],"Tu turno en el flujo",`${who?.name||"Un colega"} completó su paso en "${task.title}"`,`/?task=${task.id}`),0);
               const nextUser=USERS.find(u=>u.id===nextId);
-              const whoUser=USERS.find(u=>u.id===parseInt(uid));
+              const whoUser=who;
               if(nextUser?.email){
                 setTimeout(()=>sendEmailNotification("tu_turno",[nextUser.email],{
                   userName:nextUser.name,
@@ -2975,14 +3177,15 @@ export default function App(){
           }
           // Notificación 2: notificar al SIGUIENTE cuando el anterior inicia (En proceso)
           if(newSt==="En proceso"&&prevSt!=="En proceso"&&prevSt!=="Completado"){
-            const posIdx=Number(uid);
+            const posIdx=srcSids.indexOf(uid);
             if(posIdx>=0&&posIdx<srcIds.length-1){
               const nextId=srcIds[posIdx+1];
               const who=USERS.find(u=>u.id===srcIds[posIdx]);
               setTimeout(()=>sendPushNotification(
                 [nextId],
                 "Prepárate — tu turno se acerca",
-                `${who?.name||"Un colega"} inició su etapa en "${task.title}"`
+                `${who?.name||"Un colega"} inició su etapa en "${task.title}"`,
+                `/?task=${task.id}`
               ),0);
               const nextUser=USERS.find(u=>u.id===nextId);
               const whoUser=USERS.find(u=>u.id===srcIds[posIdx]);
@@ -3015,13 +3218,14 @@ export default function App(){
         Object.entries(patch.flowStates).forEach(([uid,newSt])=>{
           const prevSt=(task.flowStates||{})[uid]||"Pendiente";
           if(newSt!==prevSt&&task.creator?.id&&task.creator.id!==user?.id){
-            const posIdx=Number(uid);
+            const posIdx=srcSids.indexOf(uid);
             const whoUser=USERS.find(u=>u.id===srcIds[posIdx]);
             if(!whoUser) return;
             setTimeout(()=>sendPushNotification(
               [task.creator.id],
               `Avance en "${task.title}"`,
-              `${whoUser.name} cambió su etapa a "${newSt}"`
+              `${whoUser.name} cambió su etapa a "${newSt}"`,
+              `/?task=${task.id}`
             ),0);
             const creatorUser=USERS.find(u=>u.id===task.creator.id);
             if(creatorUser?.email){
@@ -3109,7 +3313,8 @@ export default function App(){
           setTimeout(()=>sendPushNotification(
             notifyBlocked,
             `🔒 Tarea bloqueada: "${task.title}"`,
-            `Bloqueada por ${user.name}. Razón: ${reason.slice(0,60)}`
+            `Bloqueada por ${user.name}. Razón: ${reason.slice(0,60)}`,
+            `/?task=${task.id}`
           ),0);
           notifyBlocked.forEach(destId=>{
             const destUser=USERS.find(u=>u.id===destId);
@@ -3192,7 +3397,7 @@ export default function App(){
       ...(t.responsible?.id?[t.responsible.id]:[]),
     ])].filter(id=>id!==t.creator?.id);
     if(notifyIds.length>0)
-      sendPushNotification(notifyIds,"Nueva tarea asignada",t.title);
+      sendPushNotification(notifyIds,"Nueva tarea asignada",t.title,`/?task=${t.id}`);
     const emailTargets=[...new Set([
       ...(t.invIds||[]),
       ...(t.responsible?.id?[t.responsible.id]:[]),
@@ -3243,9 +3448,9 @@ export default function App(){
       const pushTitle=`Aviso de ${a.origen?.name||"NEXUS"}`;
       if(a.destinatarioId==="todos"){
         const ids=USERS.map(u=>u.id).filter(id=>id!==a.origen?.id);
-        sendPushNotification(ids,pushTitle,a.texto);
+        sendPushNotification(ids,pushTitle,a.texto,`/?aviso=${a.id}`);
       } else if(a.destinatarioId&&a.destinatarioId!==a.origen?.id){
-        sendPushNotification([a.destinatarioId],pushTitle,a.texto);
+        sendPushNotification([a.destinatarioId],pushTitle,a.texto,`/?aviso=${a.id}`);
       }
       if(a.destinatarioId==="todos"){
         USERS.filter(u=>u.id!==a.origen?.id&&u.email).forEach(u=>{
@@ -3307,6 +3512,11 @@ export default function App(){
       return prev.map(x=>x.id===id?updated:x);
     });
   };
+  const updateAviso=(id,updated)=>{
+    setAvisos(prev=>prev.map(x=>x.id===id?updated:x));
+    supabase.from("avisos").update({data:updated}).eq("id",id)
+      .then(({error})=>{if(error)console.error("[Supabase] Error updateAviso:",error.message);});
+  };
   const unreadAvisos=user?avisos.filter(a=>(a.destinatarioId==="todos"||a.destinatarioId===user.id)&&!(a.leidoPor||[]).includes(user.id)).length:0;
 
   // Alerta push cuando una tarea vence mañana (una vez por día, por sesión)
@@ -3322,7 +3532,7 @@ export default function App(){
       return dl>=tomorrow&&dl<dayAfter&&!already.includes(t.id);
     });
     if(toSend.length>0){
-      toSend.forEach(t=>sendPushNotification([t.responsible.id],"⚠️ Tarea vence mañana",`"${t.title}" vence mañana`));
+      toSend.forEach(t=>sendPushNotification([t.responsible.id],"⚠️ Tarea vence mañana",`"${t.title}" vence mañana`,`/?task=${t.id}`));
       localStorage.setItem(key,JSON.stringify([...already,...toSend.map(t=>t.id)]));
     }
   },[dbReady]); // eslint-disable-line
@@ -3348,7 +3558,8 @@ export default function App(){
             sendPushNotification(
               notifyIds,
               `⏰ Vence pronto: "${task.title}"`,
-              `Quedan menos de 48 horas. Deadline: ${task.deadline}`
+              `Quedan menos de 48 horas. Deadline: ${task.deadline}`,
+              `/?task=${task.id}`
             );
             notifyIds.forEach(destId=>{
               const destUser=USERS.find(u=>u.id===destId);
@@ -3384,7 +3595,7 @@ export default function App(){
     if(tasks.length>0) checkDeadlines();
   },[tasks]); // eslint-disable-line
 
-  const logout=()=>{localStorage.removeItem("taskops_user");setUser(null);setAuthedDepts([]);setScreen("dash");};
+  const logout=()=>{localStorage.removeItem("taskops_user");sessionStorage.removeItem("taskops_authed_depts");setUser(null);setAuthedDepts([]);setScreen("dash");};
   const openNotif=()=>{const now=new Date().toISOString();localStorage.setItem("taskops_last_notif_view",now);setLastNotifView(now);setScreen("notif");};
   const unreadNotif=useMemo(()=>{
     if(!user) return 0;
@@ -3399,6 +3610,10 @@ export default function App(){
       }
     });
     avisos.forEach(a=>{if(a.destinatarioId==="todos"||a.destinatarioId===user.id){if(new Date(a.fecha||0)>since)n++;}});
+    avisos.forEach(a=>{
+      const isRecipient=a.destinatarioId==="todos"||a.destinatarioId===user.id||a.origen?.id===user.id;
+      if(isRecipient)(a.comments||[]).forEach(c=>{if(c.authorId!==user.id&&new Date(c.iso||0)>since)n++;});
+    });
     return n;
   },[tasks,avisos,user,lastNotifView]);
   const goTask=(t,from)=>{setSelTask(t);setFromScr(from||screen);setScreen("task");};
@@ -3473,7 +3688,7 @@ export default function App(){
 
   if(screen==="deleted"&&user&&(user.dept==="Dirección"||user.dept==="Ingenieria")) return <><style>{CSS}</style><ScreenDeletedTasks deletedTasks={deletedTasks} user={user} onBack={()=>setScreen("dash")}/></>;
 
-  if(screen==="avisos"&&user) return <><style>{CSS}</style><ScreenAviso user={user} avisos={avisos} onSend={sendAviso} onMarkRead={markAvisoRead} onBack={()=>{setSelAviso(null);setScreen("dash");}} initialSelected={selAviso}/></>;
+  if(screen==="avisos"&&user) return <><style>{CSS}</style><ScreenAviso user={user} avisos={avisos} onSend={sendAviso} onMarkRead={markAvisoRead} onUpdateAviso={updateAviso} onBack={()=>{setSelAviso(null);setScreen("dash");}} initialSelected={selAviso}/></>;
 
   if(screen==="notif"&&user) return <><style>{CSS}</style><ScreenNotificaciones tasks={tasks} avisos={avisos} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"notif")} onAvisoClick={a=>{setSelAviso(a);setScreen("avisos");}}/></>;
 
