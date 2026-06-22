@@ -27,7 +27,13 @@ async function sendEmail(payload: EmailPayload) {
   return res.json();
 }
 
-function emailTemplate(title: string, body: string, taskId?: string, taskTitle?: string) {
+function emailTemplate(title: string, body: string, taskId?: string, taskTitle?: string, avisoId?: string) {
+  const linkHref = taskId
+    ? `https://taskops-kappa.vercel.app/?task=${taskId}`
+    : avisoId
+    ? `https://taskops-kappa.vercel.app/?aviso=${avisoId}`
+    : null;
+  const linkLabel = taskId ? `Ver tarea ${taskId} →` : "Ver aviso →";
   return `
   <!DOCTYPE html>
   <html>
@@ -41,10 +47,10 @@ function emailTemplate(title: string, body: string, taskId?: string, taskTitle?:
       <div style="padding:28px;">
         <h2 style="color:#1E1B4B;font-size:18px;margin:0 0 12px;">${title}</h2>
         <div style="color:#64748B;font-size:14px;line-height:1.7;">${body}</div>
-        ${taskId ? `
-        <a href="https://taskops-kappa.vercel.app"
+        ${linkHref ? `
+        <a href="${linkHref}"
           style="display:inline-block;margin-top:20px;background:#4338CA;color:#fff;padding:10px 22px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600;">
-          Ver tarea ${taskId} →
+          ${linkLabel}
         </a>` : ""}
       </div>
       <div style="background:#F8FAFF;padding:14px 28px;border-top:1px solid #E2E8F0;">
@@ -126,7 +132,10 @@ serve(async (req) => {
           `Aviso de ${data.fromName} (${data.fromDept})`,
           `<p>Hola <strong>${data.userName}</strong>,</p>
            <p>Tienes un nuevo aviso:</p>
-           <div style="background:#FFFBEB;border-left:3px solid #F59E0B;padding:14px 16px;border-radius:4px;color:#78350F;line-height:1.7;">${data.texto}</div>`
+           <div style="background:#FFFBEB;border-left:3px solid #F59E0B;padding:14px 16px;border-radius:4px;color:#78350F;line-height:1.7;">${data.texto}</div>`,
+          undefined,
+          undefined,
+          data.avisoId
         );
         break;
 

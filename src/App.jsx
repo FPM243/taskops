@@ -1720,6 +1720,7 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
   const canReorder=user?(user.dept==="Dirección"||task.creator?.id===user.id):false;
   const canChangeState=user?(user.dept==="Dirección"||task.responsible?.id===user.id):false;
   const canDelete=user?(user.dept==="Dirección"||task.creator?.id===user.id):false;
+  const canReopen=user?(user.dept==="Dirección"||user.dept==="Ingenieria"||task.creator?.id===user.id):false;
   const canEdit=canChangeState;
   const invIds=task.invIds||[];const flowStates=task.flowStates||{};
   const flowStageIds=getStageIds(invIds,task.flowStageIds);
@@ -1865,6 +1866,24 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
             onMouseEnter={e=>{e.currentTarget.style.background="#047857";e.currentTarget.style.transform="translateY(-1px)";}}
             onMouseLeave={e=>{e.currentTarget.style.background="#059669";e.currentTarget.style.transform="translateY(0)";}}>
             <span style={{fontSize:20}}>✓</span> Marcar como Completada
+          </button>
+        )}
+
+        {task.status==="Completada"&&canReopen&&(
+          <button onClick={()=>{
+              const _n=new Date();
+              const entry={
+                userId:user.id,userName:user.name,userIni:user.ini,userUc:user.uc,
+                targetId:task.responsible?.id||null,targetName:task.responsible?.name||"—",
+                prevState:"Completada",newState:"En proceso",
+                time:_n.toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"})+" "+_n.toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"}),
+              };
+              onUpdate(taskId,{status:"En proceso",completedAt:null,flowLog:[...(task.flowLog||[]),entry]});
+            }}
+            style={{width:"100%",background:"#D97706",color:"#fff",border:"none",padding:"16px",borderRadius:12,fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:16,display:"flex",alignItems:"center",justifyContent:"center",gap:10,boxShadow:"0 4px 14px rgba(217,119,6,.35)",transition:"all .15s"}}
+            onMouseEnter={e=>{e.currentTarget.style.background="#B45309";e.currentTarget.style.transform="translateY(-1px)";}}
+            onMouseLeave={e=>{e.currentTarget.style.background="#D97706";e.currentTarget.style.transform="translateY(0)";}}>
+            <span style={{fontSize:20}}>↺</span> Reabrir tarea
           </button>
         )}
 
@@ -3631,6 +3650,7 @@ export default function App(){
             fromName:a.origen?.name||"—",
             fromDept:a.origen?.dept||"—",
             texto:a.texto,
+            avisoId:a.id,
           }),0);
           if(u?.phone){
             setTimeout(()=>sendWhatsAppNotification("aviso",[u.phone],{
@@ -3655,6 +3675,7 @@ export default function App(){
             fromName:a.origen?.name||"—",
             fromDept:a.origen?.dept||"—",
             texto:a.texto,
+            avisoId:a.id,
           }),0);
         }
         if(destUser?.phone){
