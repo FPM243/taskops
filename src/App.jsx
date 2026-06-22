@@ -521,7 +521,7 @@ function FlowDiagram({invIds,flowStates,flowStageIds,onReorder,onStateChange,can
       {nodes.map((u,i)=>{
         if(!visibleIndexes.includes(i)) return null;
         const st=flowStates[sids[i]]||"Pendiente";const fc=FS_CFG[st];const isLast=i===nodes.length-1;const isLastVisible=i===visibleIndexes[visibleIndexes.length-1];
-        const isPulse=nextIdx>0&&i===nextIdx&&st==="Pendiente";
+        const isPulse=nextIdx>=0&&i===nextIdx&&st==="Pendiente";
         const note=nodeNotes?.[sids[i]]||"";
         const LIMIT=80;
         const noteIsLong=note.length>LIMIT;
@@ -701,6 +701,22 @@ function DeleteModal({task,onConfirm,onCancel}){
         <div style={{fontSize:40,marginBottom:16}}>🗑️</div>
         <h3 style={{fontSize:16,fontWeight:700,color:T1,marginBottom:8}}>¿Eliminar esta tarea?</h3>
         <p style={{fontSize:13,color:T2,marginBottom:4}}>"{task.title}"</p>
+        <p style={{fontSize:12,color:"#DC2626",marginBottom:20}}>Esta acción no se puede deshacer.</p>
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={onCancel} style={{flex:1,background:BG,border:`1px solid ${BD}`,color:T2,padding:"11px",borderRadius:8,fontSize:13,cursor:"pointer",fontWeight:500}}>Cancelar</button>
+          <button onClick={onConfirm} style={{flex:1,background:"#DC2626",color:"#fff",border:"none",padding:"11px",borderRadius:8,fontSize:13,fontWeight:700,cursor:"pointer"}}>Eliminar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeleteAvisoModal({onConfirm,onCancel}){
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,.6)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div style={{background:CARD,borderRadius:16,padding:28,width:"100%",maxWidth:340,boxShadow:SHm,textAlign:"center"}}>
+        <div style={{fontSize:40,marginBottom:16}}>🗑️</div>
+        <h3 style={{fontSize:16,fontWeight:700,color:T1,marginBottom:8}}>¿Seguro que quieres eliminar este aviso?</h3>
         <p style={{fontSize:12,color:"#DC2626",marginBottom:20}}>Esta acción no se puede deshacer.</p>
         <div style={{display:"flex",gap:10}}>
           <button onClick={onCancel} style={{flex:1,background:BG,border:`1px solid ${BD}`,color:T2,padding:"11px",borderRadius:8,fontSize:13,cursor:"pointer",fontWeight:500}}>Cancelar</button>
@@ -2211,7 +2227,7 @@ function ScreenCreate({user,taskCount,onSave,onCancel,defaultDept,taskToEdit,sav
 /* ════════════════════════════════════════
    SCREEN: AVISOS
 ════════════════════════════════════════ */
-function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onBack,initialSelected}){
+function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onDeleteAviso,onBack,initialSelected}){
   const [tab,setTab]=useState("inbox");
   const [dests,setDests]=useState([]);
   const [texto,setTexto]=useState("");
@@ -2221,6 +2237,13 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onBack,initial
   const [uploadingAttach,setUploadingAttach]=useState(false);
   const [attachErr,setAttachErr]=useState(null);
   const [commentText,setCommentText]=useState("");
+  const [editingAviso,setEditingAviso]=useState(false);
+  const [editTexto,setEditTexto]=useState("");
+  const [editDestId,setEditDestId]=useState(null);
+  const [editAttachments,setEditAttachments]=useState([]);
+  const [editUploadingAttach,setEditUploadingAttach]=useState(false);
+  const [editAttachErr,setEditAttachErr]=useState(null);
+  const [showDeleteConfirm,setShowDeleteConfirm]=useState(false);
   const isMobile=useIsMobile();
 
   const myAvisos=useMemo(()=>
@@ -2311,12 +2334,73 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onBack,initial
     setTexto("");setDests([]);setDraftAttachments([]);setDraftId(`AV-${Date.now()}`);setTab("inbox");
   };
 
+  const startEdit=()=>{
+    const a=selectedAviso;
+    setEditTexto(a.texto);
+    setEditDestId(a.destinatarioId);
+    setEditAttachments(a.attachments||[]);
+    setEditAttachErr(null);
+    setEditingAviso(true);
+  };
+
+  const cancelEdit=()=>{setEditingAviso(false);setEditAttachErr(null);};
+
+  const handleEditAttachFiles=async files=>{
+    setEditAttachErr(null);
+    for(const file of files){
+      if(file.size>MAX_ATTACHMENT_SIZE){setEditAttachErr(`"${file.name}" supera 20MB`);continue;}
+      setEditUploadingAttach(true);
+      const path=`avisos/${selectedAviso.id}/${Date.now()}_${file.name}`;
+      const{error}=await supabase.storage.from("task-attachments").upload(path,file);
+      setEditUploadingAttach(false);
+      if(error){setEditAttachErr(error.message);continue;}
+      const newAtt={nombre:file.name,url:path,subidoPor:{id:user.id,name:user.name,ini:user.ini,uc:user.uc},fecha:new Date().toISOString()};
+      setEditAttachments(p=>[...p,newAtt]);
+    }
+  };
+
+  const handleRemoveEditAttachment=async idx=>{
+    const att=editAttachments[idx];
+    setEditAttachments(p=>p.filter((_,i)=>i!==idx));
+    if(att) await supabase.storage.from("task-attachments").remove([att.url]);
+  };
+
+  const canSaveEdit=editTexto.trim()&&editDestId;
+
+  const saveEdit=()=>{
+    if(!canSaveEdit||!selectedAviso) return;
+    const a=selectedAviso;
+    const isTodosEdit=editDestId==="todos";
+    const destUser=isTodosEdit?null:USERS.find(u=>u.id===editDestId);
+    const updated={
+      ...a,
+      texto:editTexto.trim(),
+      destinatario:isTodosEdit?"todos":destUser,
+      destinatarioId:editDestId,
+      destinatarioLabel:isTodosEdit?"Todos":destUser?.name,
+      attachments:editAttachments,
+    };
+    setSelectedAviso(updated);
+    if(onUpdateAviso) onUpdateAviso(a.id,updated);
+    setEditingAviso(false);
+  };
+
+  const handleDeleteAviso=()=>{
+    if(!selectedAviso) return;
+    if(onDeleteAviso) onDeleteAviso(selectedAviso.id);
+    setShowDeleteConfirm(false);
+    setSelectedAviso(null);
+  };
+
   if(selectedAviso){
     const a=selectedAviso;
     const isTodos=a.destinatarioId==="todos";
-    const leidoByMe=(a.leidoPor||[]).includes(user.id);
-    const readUsers=(a.leidoPor||[]).map(id=>USERS.find(u=>u.id===id)).filter(u=>u&&u.id!==a.origen?.id);
-    const readByRecipient=(a.leidoPor||[]).some(id=>id!==a.origen?.id);
+    const recipientUsers=isTodos
+      ?USERS.filter(u=>u.id!==a.origen?.id)
+      :[USERS.find(u=>u.id===a.destinatarioId)].filter(Boolean);
+    const readUsers=recipientUsers.filter(u=>(a.leidoPor||[]).includes(u.id));
+    const unreadUsers=recipientUsers.filter(u=>!(a.leidoPor||[]).includes(u.id));
+    const isOwner=a.origen?.id===user.id;
     return(
       <div style={{minHeight:"100vh",background:BG}}>
         <NavBar
@@ -2327,10 +2411,90 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onBack,initial
           right={<Av u={user} size={36}/>}
         />
         <div style={{maxWidth:680,margin:"0 auto",padding:"24px"}}>
-          <button onClick={()=>setSelectedAviso(null)}
-            style={{background:"none",border:`1px solid ${BD}`,borderRadius:8,padding:"8px 14px",cursor:"pointer",fontSize:12,fontWeight:600,color:T2,marginBottom:16,display:"flex",alignItems:"center",gap:6,fontFamily:"inherit"}}>
-            ← Volver
-          </button>
+          <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
+            <button onClick={()=>setSelectedAviso(null)}
+              style={{background:"none",border:`1px solid ${BD}`,borderRadius:8,padding:"8px 14px",cursor:"pointer",fontSize:12,fontWeight:600,color:T2,display:"flex",alignItems:"center",gap:6,fontFamily:"inherit"}}>
+              ← Volver
+            </button>
+            {isOwner&&!editingAviso&&(
+              <>
+                <button onClick={startEdit}
+                  style={{background:"none",border:`1px solid ${BD}`,borderRadius:8,padding:"8px 14px",cursor:"pointer",fontSize:12,fontWeight:600,color:PR,display:"flex",alignItems:"center",gap:6,fontFamily:"inherit"}}>
+                  ✏️ Editar
+                </button>
+                <button onClick={()=>setShowDeleteConfirm(true)}
+                  style={{background:"none",border:`1px solid ${BD}`,borderRadius:8,padding:"8px 14px",cursor:"pointer",fontSize:12,fontWeight:600,color:"#DC2626",display:"flex",alignItems:"center",gap:6,fontFamily:"inherit"}}>
+                  🗑️ Borrar
+                </button>
+              </>
+            )}
+          </div>
+          {showDeleteConfirm&&<DeleteAvisoModal onConfirm={handleDeleteAviso} onCancel={()=>setShowDeleteConfirm(false)}/>}
+          {editingAviso?(
+          <Card sx={{padding:24}}>
+            <div style={{marginBottom:20}}>
+              <h2 style={{fontSize:16,fontWeight:700,color:T1,marginBottom:4}}>Editar aviso</h2>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:16}}>
+              <div>
+                <Lbl ch="DESTINATARIO *"/>
+                <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                  <button onClick={()=>setEditDestId("todos")}
+                    style={{background:editDestId==="todos"?"#F59E0B18":CARD,color:editDestId==="todos"?"#B45309":T2,border:`1.5px solid ${editDestId==="todos"?"#F59E0B":BD}`,padding:"7px 14px",borderRadius:20,cursor:"pointer",fontSize:12,fontWeight:editDestId==="todos"?700:400,display:"flex",alignItems:"center",gap:6,transition:"all .12s"}}>
+                    {editDestId==="todos"&&<span style={{background:"#F59E0B",color:"#fff",borderRadius:"50%",width:16,height:16,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:11}}>✓</span>}
+                    📢 A todos
+                  </button>
+                  {USERS.filter(u=>u.id!==a.origen?.id).map(u=>{const sel=editDestId===u.id;return(
+                    <button key={u.id} onClick={()=>setEditDestId(u.id)}
+                      style={{background:sel?u.uc+"18":CARD,color:sel?u.uc:T2,border:`1.5px solid ${sel?u.uc:BD}`,padding:"7px 12px",borderRadius:20,cursor:"pointer",fontSize:12,fontWeight:sel?700:400,display:"flex",alignItems:"center",gap:6,transition:"all .12s"}}>
+                      {sel&&<span style={{background:u.uc,color:"#fff",borderRadius:"50%",width:16,height:16,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:11}}>✓</span>}
+                      <span>{shortName(u.name)}</span>
+                    </button>
+                  );})}
+                </div>
+              </div>
+              <div>
+                <Lbl ch="MENSAJE DEL AVISO *"/>
+                <textarea value={editTexto} onChange={e=>setEditTexto(e.target.value)} rows={4}
+                  placeholder="Escribe tu aviso aquí..." style={{...inp,borderRadius:10,lineHeight:1.7}}/>
+              </div>
+              <div>
+                <Lbl ch="ARCHIVOS ADJUNTOS"/>
+                {editAttachments.length>0&&(
+                  <div style={{display:"flex",flexDirection:"column",gap:4,marginBottom:8}}>
+                    {editAttachments.map((att,ai)=>(
+                      <div key={ai} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,background:BG,borderRadius:6,padding:"6px 10px"}}>
+                        <div style={{minWidth:0,flex:1}}>
+                          <div style={{fontSize:12,color:T1,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{att.nombre}</div>
+                        </div>
+                        <button onClick={()=>handleRemoveEditAttachment(ai)}
+                          style={{background:"none",border:`1px solid ${BD}`,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:600,color:"#DC2626",flexShrink:0,fontFamily:"inherit"}}>
+                          ✕ Quitar
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <label style={{display:"inline-flex",alignItems:"center",gap:6,background:BG,border:`1px dashed ${BD}`,borderRadius:6,padding:"6px 12px",cursor:editUploadingAttach?"default":"pointer",fontSize:12,fontWeight:600,color:T2}}>
+                  {editUploadingAttach?"Subiendo...":"+ Adjuntar archivo"}
+                  <input type="file" multiple disabled={editUploadingAttach} style={{display:"none"}}
+                    onChange={e=>{const files=Array.from(e.target.files||[]);handleEditAttachFiles(files);e.target.value="";}}/>
+                </label>
+                {editAttachErr&&<div style={{fontSize:11,color:"#DC2626",marginTop:4}}>{editAttachErr}</div>}
+              </div>
+              <div style={{display:"flex",gap:10}}>
+                <button onClick={cancelEdit}
+                  style={{flex:1,background:BG,border:`1px solid ${BD}`,color:T2,padding:"11px",borderRadius:8,fontSize:13,cursor:"pointer",fontWeight:600,fontFamily:"inherit"}}>
+                  Cancelar
+                </button>
+                <button onClick={saveEdit} disabled={!canSaveEdit}
+                  style={{flex:1,background:canSaveEdit?PR:"#E2E8F0",color:canSaveEdit?"#fff":T3,border:"none",padding:"11px",fontSize:13,fontWeight:700,cursor:canSaveEdit?"pointer":"not-allowed",borderRadius:8,fontFamily:"inherit"}}>
+                  Guardar cambios
+                </button>
+              </div>
+            </div>
+          </Card>
+          ):(
           <Card sx={{padding:24}}>
             <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:20}}>
               <div style={{width:44,height:44,borderRadius:"50%",background:"#F59E0B",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:20}}>📢</div>
@@ -2351,22 +2515,29 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onBack,initial
               </div>
               <div>
                 <Lbl ch="ESTADO DE LECTURA"/>
-                {isTodos?(
-                  <div>
-                    <div style={{fontSize:13,color:T2,marginBottom:8}}>Leído por {readUsers.length} usuario(s)</div>
-                    {readUsers.length>0&&(
+                <div>
+                  <div style={{fontSize:13,color:T2,marginBottom:8}}>Leído por {readUsers.length} de {recipientUsers.length} destinatario(s)</div>
+                  {readUsers.length>0&&(
+                    <div style={{marginBottom:unreadUsers.length>0?10:0}}>
+                      <div style={{fontSize:11,fontWeight:600,color:T3,letterSpacing:.4,marginBottom:6}}>LEÍDO</div>
                       <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
                         {readUsers.map(u=>(
-                          <Badge key={u.id} ch={shortName(u.name)} c={u.uc} bg={u.uc+"18"}/>
+                          <Badge key={u.id} ch={`✓ ${shortName(u.name)}`} c={u.uc} bg={u.uc+"18"}/>
                         ))}
                       </div>
-                    )}
-                  </div>
-                ):a.origen?.id===user.id?(
-                  <Badge ch={readByRecipient?"✓ Leído":"⏳ Sin leer aún"} c={readByRecipient?"#059669":"#D97706"} bg={readByRecipient?"#ECFDF5":"#FFFBEB"}/>
-                ):(
-                  <Badge ch={leidoByMe?"✓ Leído":"⏳ Sin leer"} c={leidoByMe?"#059669":"#D97706"} bg={leidoByMe?"#ECFDF5":"#FFFBEB"}/>
-                )}
+                    </div>
+                  )}
+                  {unreadUsers.length>0&&(
+                    <div>
+                      <div style={{fontSize:11,fontWeight:600,color:T3,letterSpacing:.4,marginBottom:6}}>SIN LEER</div>
+                      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                        {unreadUsers.map(u=>(
+                          <Badge key={u.id} ch={`👁️‍🗨️ ${shortName(u.name)}`} c={T3} bg="#F1F5F9"/>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
               {(a.attachments||[]).length>0&&(
                 <div>
@@ -2423,6 +2594,7 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onBack,initial
               </div>
             </div>
           </Card>
+          )}
         </div>
       </div>
     );
@@ -3517,83 +3689,13 @@ export default function App(){
     supabase.from("avisos").update({data:updated}).eq("id",id)
       .then(({error})=>{if(error)console.error("[Supabase] Error updateAviso:",error.message);});
   };
+  const deleteAviso=async id=>{
+    setAvisos(p=>p.filter(a=>a.id!==id));
+    const {error}=await supabase.from("avisos").delete().eq("id",id);
+    if(error) console.error("[Supabase] Error DELETE aviso:",id,error.message,error);
+    else console.log("[Supabase] DELETE aviso ok:",id);
+  };
   const unreadAvisos=user?avisos.filter(a=>(a.destinatarioId==="todos"||a.destinatarioId===user.id)&&!(a.leidoPor||[]).includes(user.id)).length:0;
-
-  // Alerta push cuando una tarea vence mañana (una vez por día, por sesión)
-  useEffect(()=>{
-    if(!dbReady||!tasks.length) return;
-    const tomorrow=new Date(); tomorrow.setDate(tomorrow.getDate()+1); tomorrow.setHours(0,0,0,0);
-    const dayAfter=new Date(); dayAfter.setDate(dayAfter.getDate()+2); dayAfter.setHours(0,0,0,0);
-    const key="taskops_deadline_notif_"+new Date().toDateString();
-    const already=JSON.parse(localStorage.getItem(key)||"[]");
-    const toSend=tasks.filter(t=>{
-      if(!isActive(t)||!t.deadline||!t.responsible?.id) return false;
-      const dl=new Date(t.deadline+"T12:00:00");
-      return dl>=tomorrow&&dl<dayAfter&&!already.includes(t.id);
-    });
-    if(toSend.length>0){
-      toSend.forEach(t=>sendPushNotification([t.responsible.id],"⚠️ Tarea vence mañana",`"${t.title}" vence mañana`,`/?task=${t.id}`));
-      localStorage.setItem(key,JSON.stringify([...already,...toSend.map(t=>t.id)]));
-    }
-  },[dbReady]); // eslint-disable-line
-
-  // Notificación 4: recordatorio 48h antes del deadline (una vez por día)
-  useEffect(()=>{
-    const checkDeadlines=()=>{
-      const now=new Date();
-      const in48h=new Date(now.getTime()+48*60*60*1000);
-      const lastCheck=localStorage.getItem("nexus_deadline_check");
-      const lastCheckDate=lastCheck?new Date(lastCheck):null;
-      if(lastCheckDate&&now-lastCheckDate<23*60*60*1000) return;
-      localStorage.setItem("nexus_deadline_check",now.toISOString());
-      tasks.forEach(task=>{
-        if(!isActive(task)||!task.deadline) return;
-        const dl=new Date(task.deadline+"T23:59:59");
-        const hoursLeft=(dl-now)/(1000*60*60);
-        if(hoursLeft>0&&hoursLeft<=48){
-          const notifyIds=[];
-          if(task.responsible?.id) notifyIds.push(task.responsible.id);
-          if(task.creator?.id&&task.creator.id!==task.responsible?.id) notifyIds.push(task.creator.id);
-          if(notifyIds.length>0){
-            sendPushNotification(
-              notifyIds,
-              `⏰ Vence pronto: "${task.title}"`,
-              `Quedan menos de 48 horas. Deadline: ${task.deadline}`,
-              `/?task=${task.id}`
-            );
-            notifyIds.forEach(destId=>{
-              const destUser=USERS.find(u=>u.id===destId);
-              if(!destUser?.email) return;
-              sendEmailNotification("deadline_proximo",[destUser.email],{
-                userName:destUser.name,
-                taskId:task.id,
-                taskTitle:task.title,
-                deadline:task.deadline,
-                hoursLeft:Math.round(hoursLeft),
-              });
-              if(destUser?.phone){
-                sendWhatsAppNotification("deadline_proximo",[destUser.phone],{
-                  userName:destUser.name,
-                  taskId:task.id,
-                  taskTitle:task.title,
-                  deadline:task.deadline,
-                  hoursLeft:Math.round(hoursLeft),
-                });
-                sendSMSNotification("deadline_proximo",[destUser.phone],{
-                  userName:destUser.name,
-                  taskId:task.id,
-                  taskTitle:task.title,
-                  deadline:task.deadline,
-                  hoursLeft:Math.round(hoursLeft),
-                });
-              }
-            });
-          }
-        }
-      });
-    };
-    if(tasks.length>0) checkDeadlines();
-  },[tasks]); // eslint-disable-line
 
   const logout=()=>{localStorage.removeItem("taskops_user");sessionStorage.removeItem("taskops_authed_depts");setUser(null);setAuthedDepts([]);setScreen("dash");};
   const openNotif=()=>{const now=new Date().toISOString();localStorage.setItem("taskops_last_notif_view",now);setLastNotifView(now);setScreen("notif");};
@@ -3688,7 +3790,7 @@ export default function App(){
 
   if(screen==="deleted"&&user&&(user.dept==="Dirección"||user.dept==="Ingenieria")) return <><style>{CSS}</style><ScreenDeletedTasks deletedTasks={deletedTasks} user={user} onBack={()=>setScreen("dash")}/></>;
 
-  if(screen==="avisos"&&user) return <><style>{CSS}</style><ScreenAviso user={user} avisos={avisos} onSend={sendAviso} onMarkRead={markAvisoRead} onUpdateAviso={updateAviso} onBack={()=>{setSelAviso(null);setScreen("dash");}} initialSelected={selAviso}/></>;
+  if(screen==="avisos"&&user) return <><style>{CSS}</style><ScreenAviso user={user} avisos={avisos} onSend={sendAviso} onMarkRead={markAvisoRead} onUpdateAviso={updateAviso} onDeleteAviso={deleteAviso} onBack={()=>{setSelAviso(null);setScreen("dash");}} initialSelected={selAviso}/></>;
 
   if(screen==="notif"&&user) return <><style>{CSS}</style><ScreenNotificaciones tasks={tasks} avisos={avisos} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"notif")} onAvisoClick={a=>{setSelAviso(a);setScreen("avisos");}}/></>;
 
