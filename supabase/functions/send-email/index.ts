@@ -188,6 +188,19 @@ serve(async (req) => {
         );
         break;
 
+      case "nuevo_comentario":
+        subject = `💬 Nuevo comentario en: ${data.taskTitle}`;
+        html = emailTemplate(
+          "Nuevo comentario en una tarea",
+          `<p>Hola <strong>${data.userName}</strong>,</p>
+           <p><strong>${data.commenterName}</strong> comentó en la siguiente tarea:</p>
+           <p style="background:#EEF2FF;border-left:3px solid #4338CA;padding:12px 16px;border-radius:4px;font-weight:600;color:#1E1B4B;">${data.taskTitle}</p>
+           <p style="color:#64748B;">"${data.commentText}"</p>`,
+          data.taskId,
+          data.taskTitle
+        );
+        break;
+
       case "deadline_proximo":
         subject = `⏰ Tarea vence en ${data.hoursLeft}h: ${data.taskTitle}`;
         html = emailTemplate(

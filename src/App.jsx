@@ -353,6 +353,16 @@ const isTodayDeadline = d => {
   const dt=new Date(d+"T12:00:00"), now=new Date();
   return dt.toDateString()===now.toDateString();
 };
+// Destinatarios de un aviso: soporta el array nuevo (destinatarioIds) y
+// cae de vuelta al campo viejo singular (destinatarioId) para avisos
+// existentes en Supabase — no requiere migración de datos.
+const avisoRecipients = a => a.destinatarioIds!==undefined ? a.destinatarioIds : a.destinatarioId;
+const avisoIncludesUser = (a,uid) => {
+  const d=avisoRecipients(a);
+  if(d==="todos") return true;
+  if(Array.isArray(d)) return d.includes(uid);
+  return d===uid;
+};
 const genStageId = () => `st${Date.now().toString(36)}${Math.random().toString(36).slice(2,7)}`;
 const getStageIds = (invIds,flowStageIds) => (flowStageIds&&flowStageIds.length===invIds.length) ? flowStageIds : invIds.map((_,i)=>String(i));
 const calcProgress = (invIds,flowStates,flowStageIds) => {
@@ -1709,7 +1719,42 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
     const c={user,text:comment,time:_now.toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"})+" "+_now.toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"}),iso:_now.toISOString()};
     onUpdate(taskId,{comments:[...(task?.comments||[]),c]});
     const recipientIds=[...new Set([...(task?.invIds||[]),task?.responsible?.id,task?.creator?.id].filter(Boolean))].filter(id=>id!==user?.id);
-    if(recipientIds.length>0) sendPushNotification(recipientIds,`💬 Nuevo comentario en: ${task?.title}`,`${user?.name}: ${comment.trim().slice(0,80)}${comment.trim().length>80?"…":""}`,`/?task=${taskId}`);
+    const commentPreview=`${comment.trim().slice(0,80)}${comment.trim().length>80?"…":""}`;
+    if(recipientIds.length>0){
+      sendPushNotification(recipientIds,`💬 Nuevo comentario en: ${task?.title}`,`${user?.name}: ${commentPreview}`,`/?task=${taskId}`);
+      // Fallback de email/WhatsApp/SMS: sin esto, quien no tenga push
+      // habilitado (común en iOS sin instalar la PWA) nunca se entera
+      // de comentarios nuevos, a diferencia de cualquier otro evento.
+      recipientIds.forEach(id=>{
+        const u=USERS.find(x=>x.id===id);
+        if(!u) return;
+        if(u.email){
+          setTimeout(()=>sendEmailNotification("nuevo_comentario",[u.email],{
+            userName:u.name,
+            taskId:taskId,
+            taskTitle:task?.title,
+            commenterName:user?.name||"—",
+            commentText:commentPreview,
+          }),0);
+        }
+        if(u.phone){
+          setTimeout(()=>sendWhatsAppNotification("nuevo_comentario",[u.phone],{
+            userName:u.name,
+            taskId:taskId,
+            taskTitle:task?.title,
+            commenterName:user?.name||"—",
+            commentText:commentPreview,
+          }),0);
+          setTimeout(()=>sendSMSNotification("nuevo_comentario",[u.phone],{
+            userName:u.name,
+            taskId:taskId,
+            taskTitle:task?.title,
+            commenterName:user?.name||"—",
+            commentText:commentPreview,
+          }),0);
+        }
+      });
+    }
     setComment("");
   };
 
@@ -2258,7 +2303,7 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onDeleteAviso,
   const [commentText,setCommentText]=useState("");
   const [editingAviso,setEditingAviso]=useState(false);
   const [editTexto,setEditTexto]=useState("");
-  const [editDestId,setEditDestId]=useState(null);
+  const [editDestIds,setEditDestIds]=useState([]);
   const [editAttachments,setEditAttachments]=useState([]);
   const [editUploadingAttach,setEditUploadingAttach]=useState(false);
   const [editAttachErr,setEditAttachErr]=useState(null);
@@ -2266,7 +2311,7 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onDeleteAviso,
   const isMobile=useIsMobile();
 
   const myAvisos=useMemo(()=>
-    [...avisos].filter(a=>a.destinatarioId==="todos"||a.destinatarioId===user.id)
+    [...avisos].filter(a=>avisoIncludesUser(a,user.id))
       .sort((a,b)=>new Date(b.fecha)-new Date(a.fecha))
   ,[avisos,user.id]);
 
@@ -2279,7 +2324,16 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onDeleteAviso,
 
   useEffect(()=>{
     if(tab==="inbox") myAvisos.forEach(a=>{if(!(a.leidoPor||[]).includes(user.id)) onMarkRead(a.id);});
-  },[tab]); // eslint-disable-line
+  },[tab,myAvisos,user.id,onMarkRead]);
+
+  // Resync: si el aviso abierto cambia en el array `avisos` (p.ej. llega un
+  // comentario nuevo por Realtime), refleja la versión viva en vez de
+  // quedarse con la foto local tomada al abrirlo.
+  useEffect(()=>{
+    if(!selectedAviso) return;
+    const fresh=avisos.find(x=>x.id===selectedAviso.id);
+    if(fresh&&fresh!==selectedAviso) setSelectedAviso(fresh);
+  },[avisos,selectedAviso]);
 
   const fmtFecha=f=>{
     const d=new Date(f);
@@ -2323,18 +2377,18 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onDeleteAviso,
     if(!commentText.trim()||!selectedAviso) return;
     const a=selectedAviso;
     const newComment={text:commentText.trim(),authorId:user.id,authorName:user.name,iso:new Date().toISOString()};
-    const updated={...a,comments:[...(a.comments||[]),newComment]};
-    setSelectedAviso(updated);
+    setSelectedAviso({...a,comments:[...(a.comments||[]),newComment]});
     setCommentText("");
-    if(onUpdateAviso) onUpdateAviso(a.id,updated);
+    // Append atómico server-side: nunca pisa un comentario que otro
+    // cliente haya agregado casi al mismo tiempo (ver append_aviso_comment).
+    supabase.rpc("append_aviso_comment",{aviso_id:a.id,new_comment:newComment})
+      .then(({error})=>{if(error)console.error("[Supabase] Error append_aviso_comment:",error.message);});
     const words=a.texto.split(" ").slice(0,6).join(" ");
     const pushTitle=`💬 Nuevo comentario en aviso: ${words}${a.texto.split(" ").length>6?"...":""}`;
-    let recipientIds;
-    if(a.destinatarioId==="todos"){
-      recipientIds=USERS.map(u=>u.id).filter(id=>id!==user.id);
-    } else {
-      recipientIds=[a.origen?.id,a.destinatarioId].filter(id=>id&&id!==user.id);
-    }
+    const destIds=avisoRecipients(a);
+    const recipientIds=destIds==="todos"
+      ?USERS.map(u=>u.id).filter(id=>id!==user.id)
+      :[...new Set([a.origen?.id,...(Array.isArray(destIds)?destIds:[destIds])])].filter(id=>id&&id!==user.id);
     if(recipientIds.length>0) sendPushNotification(recipientIds,pushTitle,newComment.text,`/?aviso=${a.id}`);
   };
 
@@ -2342,12 +2396,14 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onDeleteAviso,
     if(!canSendAviso) return;
     const fecha=new Date().toISOString();
     if(dests.includes("todos")){
-      onSend({id:`AV-${Date.now()}-todos`,origen:user,destinatario:"todos",destinatarioId:"todos",destinatarioLabel:"Todos",texto:texto.trim(),fecha,leidoPor:[user.id],attachments:draftAttachments});
+      onSend({id:`AV-${Date.now()}-todos`,origen:user,destinatarioIds:"todos",destinatarioLabel:"Todos",texto:texto.trim(),fecha,leidoPor:[user.id],attachments:draftAttachments});
     } else {
-      dests.forEach((destId,i)=>{
-        const destUser=USERS.find(u=>u.id===destId);
-        if(!destUser) return;
-        onSend({id:`AV-${Date.now()}-${i}-${destId}`,origen:user,destinatario:destUser,destinatarioId:destUser.id,destinatarioLabel:destUser.name,texto:texto.trim(),fecha,leidoPor:[user.id],attachments:draftAttachments});
+      const destUsers=dests.map(id=>USERS.find(u=>u.id===id)).filter(Boolean);
+      onSend({
+        id:`AV-${Date.now()}`,origen:user,
+        destinatarioIds:destUsers.map(u=>u.id),
+        destinatarioLabel:destUsers.length>1?`${destUsers.length} personas`:destUsers[0]?.name,
+        texto:texto.trim(),fecha,leidoPor:[user.id],attachments:draftAttachments,
       });
     }
     setTexto("");setDests([]);setDraftAttachments([]);setDraftId(`AV-${Date.now()}`);setTab("inbox");
@@ -2356,10 +2412,16 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onDeleteAviso,
   const startEdit=()=>{
     const a=selectedAviso;
     setEditTexto(a.texto);
-    setEditDestId(a.destinatarioId);
+    const d=avisoRecipients(a);
+    setEditDestIds(d==="todos"?["todos"]:Array.isArray(d)?d:[d]);
     setEditAttachments(a.attachments||[]);
     setEditAttachErr(null);
     setEditingAviso(true);
+  };
+
+  const toggleEditDest=v=>{
+    if(v==="todos") setEditDestIds(p=>p.includes("todos")?[]:["todos"]);
+    else setEditDestIds(p=>p.includes("todos")?[v]:p.includes(v)?p.filter(x=>x!==v):[...p,v]);
   };
 
   const cancelEdit=()=>{setEditingAviso(false);setEditAttachErr(null);};
@@ -2384,23 +2446,21 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onDeleteAviso,
     if(att) await supabase.storage.from("task-attachments").remove([att.url]);
   };
 
-  const canSaveEdit=editTexto.trim()&&editDestId;
+  const canSaveEdit=editTexto.trim()&&editDestIds.length>0;
 
   const saveEdit=()=>{
     if(!canSaveEdit||!selectedAviso) return;
     const a=selectedAviso;
-    const isTodosEdit=editDestId==="todos";
-    const destUser=isTodosEdit?null:USERS.find(u=>u.id===editDestId);
-    const updated={
-      ...a,
+    const isTodosEdit=editDestIds.includes("todos");
+    const destUsers=isTodosEdit?[]:editDestIds.map(id=>USERS.find(u=>u.id===id)).filter(Boolean);
+    const patch={
       texto:editTexto.trim(),
-      destinatario:isTodosEdit?"todos":destUser,
-      destinatarioId:editDestId,
-      destinatarioLabel:isTodosEdit?"Todos":destUser?.name,
+      destinatarioIds:isTodosEdit?"todos":destUsers.map(u=>u.id),
+      destinatarioLabel:isTodosEdit?"Todos":(destUsers.length>1?`${destUsers.length} personas`:destUsers[0]?.name),
       attachments:editAttachments,
     };
-    setSelectedAviso(updated);
-    if(onUpdateAviso) onUpdateAviso(a.id,updated);
+    setSelectedAviso({...a,...patch});
+    if(onUpdateAviso) onUpdateAviso(a.id,patch);
     setEditingAviso(false);
   };
 
@@ -2413,10 +2473,11 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onDeleteAviso,
 
   if(selectedAviso){
     const a=selectedAviso;
-    const isTodos=a.destinatarioId==="todos";
+    const destIds=avisoRecipients(a);
+    const isTodos=destIds==="todos";
     const recipientUsers=isTodos
       ?USERS.filter(u=>u.id!==a.origen?.id)
-      :[USERS.find(u=>u.id===a.destinatarioId)].filter(Boolean);
+      :(Array.isArray(destIds)?destIds:[destIds]).map(id=>USERS.find(u=>u.id===id)).filter(Boolean);
     const readUsers=recipientUsers.filter(u=>(a.leidoPor||[]).includes(u.id));
     const unreadUsers=recipientUsers.filter(u=>!(a.leidoPor||[]).includes(u.id));
     const isOwner=a.origen?.id===user.id;
@@ -2456,15 +2517,15 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onDeleteAviso,
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:16}}>
               <div>
-                <Lbl ch="DESTINATARIO *"/>
+                <Lbl ch="DESTINATARIO(S) *"/>
                 <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
-                  <button onClick={()=>setEditDestId("todos")}
-                    style={{background:editDestId==="todos"?"#F59E0B18":CARD,color:editDestId==="todos"?"#B45309":T2,border:`1.5px solid ${editDestId==="todos"?"#F59E0B":BD}`,padding:"7px 14px",borderRadius:20,cursor:"pointer",fontSize:12,fontWeight:editDestId==="todos"?700:400,display:"flex",alignItems:"center",gap:6,transition:"all .12s"}}>
-                    {editDestId==="todos"&&<span style={{background:"#F59E0B",color:"#fff",borderRadius:"50%",width:16,height:16,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:11}}>✓</span>}
+                  <button onClick={()=>toggleEditDest("todos")}
+                    style={{background:editDestIds.includes("todos")?"#F59E0B18":CARD,color:editDestIds.includes("todos")?"#B45309":T2,border:`1.5px solid ${editDestIds.includes("todos")?"#F59E0B":BD}`,padding:"7px 14px",borderRadius:20,cursor:"pointer",fontSize:12,fontWeight:editDestIds.includes("todos")?700:400,display:"flex",alignItems:"center",gap:6,transition:"all .12s"}}>
+                    {editDestIds.includes("todos")&&<span style={{background:"#F59E0B",color:"#fff",borderRadius:"50%",width:16,height:16,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:11}}>✓</span>}
                     📢 A todos
                   </button>
-                  {USERS.filter(u=>u.id!==a.origen?.id).map(u=>{const sel=editDestId===u.id;return(
-                    <button key={u.id} onClick={()=>setEditDestId(u.id)}
+                  {USERS.filter(u=>u.id!==a.origen?.id).map(u=>{const sel=editDestIds.includes(u.id);return(
+                    <button key={u.id} onClick={()=>toggleEditDest(u.id)}
                       style={{background:sel?u.uc+"18":CARD,color:sel?u.uc:T2,border:`1.5px solid ${sel?u.uc:BD}`,padding:"7px 12px",borderRadius:20,cursor:"pointer",fontSize:12,fontWeight:sel?700:400,display:"flex",alignItems:"center",gap:6,transition:"all .12s"}}>
                       {sel&&<span style={{background:u.uc,color:"#fff",borderRadius:"50%",width:16,height:16,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:11}}>✓</span>}
                       <span>{shortName(u.name)}</span>
@@ -2732,7 +2793,7 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onDeleteAviso,
                           {!leido&&<div style={{width:7,height:7,borderRadius:"50%",background:"#F59E0B",flexShrink:0}}/>}
                           <span style={{fontSize:12,fontWeight:700,color:T1}}>{a.origen?.name}</span>
                           <span style={{fontSize:11,color:T3}}>({a.origen?.dept})</span>
-                          {a.destinatarioId!=="todos"&&<span style={{fontSize:11,color:T3}}>→ ti</span>}
+                          {avisoRecipients(a)!=="todos"&&<span style={{fontSize:11,color:T3}}>→ ti</span>}
                         </div>
                         <span style={{fontSize:10,color:T3,whiteSpace:"nowrap"}}>{fmtFecha(a.fecha)}</span>
                       </div>
@@ -2761,9 +2822,14 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onDeleteAviso,
                     </div>
                     <p style={{fontSize:13,color:T2,lineHeight:1.6,margin:0}}>{a.texto}</p>
                     <div style={{marginTop:5,fontSize:10,color:T3}}>
-                      {a.destinatarioId==="todos"
-                        ?`Leído por ${Math.max(0,(a.leidoPor||[]).length-1)} usuario(s)`
-                        :`${(a.leidoPor||[]).filter(id=>id!==user.id).length>0?"✓ Leído":"⏳ Sin leer aún"}`}
+                      {(()=>{
+                        const destIds=avisoRecipients(a);
+                        const isTodos=destIds==="todos";
+                        const total=isTodos?USERS.length-1:(Array.isArray(destIds)?destIds.length:1);
+                        return isTodos||total>1
+                          ?`Leído por ${Math.max(0,(a.leidoPor||[]).length-1)} de ${total} usuario(s)`
+                          :`${(a.leidoPor||[]).filter(id=>id!==user.id).length>0?"✓ Leído":"⏳ Sin leer aún"}`;
+                      })()}
                     </div>
                     {(a.attachments||[]).length>0&&(
                       <div style={{marginTop:2,fontSize:10,color:T3}}>📎 {a.attachments.length} archivo{a.attachments.length!==1?"s":""}</div>
@@ -3053,7 +3119,7 @@ function ScreenNotificaciones({tasks,avisos,user,onBack,onTaskClick,onAvisoClick
 
     // Avisos recibidos
     avisos.forEach(a=>{
-      if(a.destinatarioId==="todos"||a.destinatarioId===user.id){
+      if(avisoIncludesUser(a,user.id)){
         const leido=(a.leidoPor||[]).includes(user.id);
         list.push({
           type:"aviso",icon:"📢",
@@ -3458,13 +3524,17 @@ export default function App(){
           const _fecha=new Date().toISOString();
           setTimeout(()=>{
             if(notify.includes("todos")){
-              sendAviso({id:`AV-${Date.now()}-ntf-todos`,origen:user,destinatario:"todos",destinatarioId:"todos",destinatarioLabel:"Todos",texto:_txt,fecha:_fecha,leidoPor:[user.id]});
+              sendAviso({id:`AV-${Date.now()}-ntf-todos`,origen:user,destinatarioIds:"todos",destinatarioLabel:"Todos",texto:_txt,fecha:_fecha,leidoPor:[user.id]});
             } else {
-              notify.forEach(destId=>{
-                const destUser=USERS.find(u=>u.id===destId);
-                if(!destUser) return;
-                sendAviso({id:`AV-${Date.now()}-ntf-${destId}`,origen:user,destinatario:destUser,destinatarioId:destUser.id,destinatarioLabel:destUser.name,texto:_txt,fecha:_fecha,leidoPor:[user.id]});
-              });
+              const notifyUsers=notify.map(destId=>USERS.find(u=>u.id===destId)).filter(Boolean);
+              if(notifyUsers.length>0){
+                sendAviso({
+                  id:`AV-${Date.now()}-ntf-group`,origen:user,
+                  destinatarioIds:notifyUsers.map(u=>u.id),
+                  destinatarioLabel:notifyUsers.length>1?`${notifyUsers.length} personas`:notifyUsers[0].name,
+                  texto:_txt,fecha:_fecha,leidoPor:[user.id],
+                });
+              }
               notify.forEach(destId=>{
                 const destUser=USERS.find(u=>u.id===destId);
                 if(!destUser?.email) return;
@@ -3635,16 +3705,16 @@ export default function App(){
     if(error) console.error("[Supabase] Error INSERT aviso:",error.message,error);
     else {
       console.log("[Supabase] INSERT aviso ok:",a.id);
-      // Push al destinatario (excluyendo al propio origen)
+      const destIds=avisoRecipients(a);
+      const recipientIds=destIds==="todos"
+        ?USERS.map(u=>u.id).filter(id=>id!==a.origen?.id)
+        :[...new Set(Array.isArray(destIds)?destIds:[destIds])].filter(id=>id&&id!==a.origen?.id);
       const pushTitle=`Aviso de ${a.origen?.name||"NEXUS"}`;
-      if(a.destinatarioId==="todos"){
-        const ids=USERS.map(u=>u.id).filter(id=>id!==a.origen?.id);
-        sendPushNotification(ids,pushTitle,a.texto,`/?aviso=${a.id}`);
-      } else if(a.destinatarioId&&a.destinatarioId!==a.origen?.id){
-        sendPushNotification([a.destinatarioId],pushTitle,a.texto,`/?aviso=${a.id}`);
-      }
-      if(a.destinatarioId==="todos"){
-        USERS.filter(u=>u.id!==a.origen?.id&&u.email).forEach(u=>{
+      if(recipientIds.length>0) sendPushNotification(recipientIds,pushTitle,a.texto,`/?aviso=${a.id}`);
+      recipientIds.forEach(id=>{
+        const u=USERS.find(x=>x.id===id);
+        if(!u) return;
+        if(u.email){
           setTimeout(()=>sendEmailNotification("aviso",[u.email],{
             userName:u.name,
             fromName:a.origen?.name||"—",
@@ -3652,63 +3722,47 @@ export default function App(){
             texto:a.texto,
             avisoId:a.id,
           }),0);
-          if(u?.phone){
-            setTimeout(()=>sendWhatsAppNotification("aviso",[u.phone],{
-              userName:u.name,
-              fromName:a.origen?.name||"—",
-              fromDept:a.origen?.dept||"—",
-              texto:a.texto,
-            }),0);
-            setTimeout(()=>sendSMSNotification("aviso",[u.phone],{
-              userName:u.name,
-              fromName:a.origen?.name||"—",
-              fromDept:a.origen?.dept||"—",
-              texto:a.texto,
-            }),0);
-          }
-        });
-      } else {
-        const destUser=USERS.find(u=>u.id===a.destinatarioId);
-        if(destUser?.email){
-          setTimeout(()=>sendEmailNotification("aviso",[destUser.email],{
-            userName:destUser.name,
-            fromName:a.origen?.name||"—",
-            fromDept:a.origen?.dept||"—",
-            texto:a.texto,
-            avisoId:a.id,
-          }),0);
         }
-        if(destUser?.phone){
-          setTimeout(()=>sendWhatsAppNotification("aviso",[destUser.phone],{
-            userName:destUser.name,
+        if(u.phone){
+          setTimeout(()=>sendWhatsAppNotification("aviso",[u.phone],{
+            userName:u.name,
             fromName:a.origen?.name||"—",
             fromDept:a.origen?.dept||"—",
             texto:a.texto,
           }),0);
-          setTimeout(()=>sendSMSNotification("aviso",[destUser.phone],{
-            userName:destUser.name,
+          setTimeout(()=>sendSMSNotification("aviso",[u.phone],{
+            userName:u.name,
             fromName:a.origen?.name||"—",
             fromDept:a.origen?.dept||"—",
             texto:a.texto,
           }),0);
         }
-      }
+      });
     }
   };
   const markAvisoRead=id=>{
     setAvisos(prev=>{
       const a=prev.find(x=>x.id===id);
       if(!a||(a.leidoPor||[]).includes(user.id)) return prev;
-      const updated={...a,leidoPor:[...(a.leidoPor||[]),user.id]};
-      supabase.from("avisos").update({data:updated}).eq("id",id)
-        .then(({error})=>{if(error)console.error("[Supabase] Error markRead aviso:",error.message);});
-      return prev.map(x=>x.id===id?updated:x);
+      const optimistic={...a,leidoPor:[...(a.leidoPor||[]),user.id]};
+      // Append atómico server-side: la marca de lectura se calcula sobre la
+      // fila viva, así nunca se pierde por una sobreescritura concurrente
+      // de otro usuario leyendo el mismo aviso casi al mismo tiempo.
+      supabase.rpc("mark_aviso_read",{aviso_id:id,p_user_id:user.id})
+        .then(({data:merged,error})=>{
+          if(error){console.error("[Supabase] Error markRead aviso:",error.message);return;}
+          if(merged) setAvisos(current=>current.map(x=>x.id===id?merged:x));
+        });
+      return prev.map(x=>x.id===id?optimistic:x);
     });
   };
-  const updateAviso=(id,updated)=>{
-    setAvisos(prev=>prev.map(x=>x.id===id?updated:x));
-    supabase.from("avisos").update({data:updated}).eq("id",id)
-      .then(({error})=>{if(error)console.error("[Supabase] Error updateAviso:",error.message);});
+  const updateAviso=(id,patch)=>{
+    setAvisos(prev=>prev.map(x=>x.id===id?{...x,...patch}:x));
+    supabase.rpc("merge_aviso_data",{aviso_id:id,patch})
+      .then(({data:merged,error})=>{
+        if(error){console.error("[Supabase] Error updateAviso:",error.message);return;}
+        if(merged) setAvisos(current=>current.map(x=>x.id===id?merged:x));
+      });
   };
   const deleteAviso=async id=>{
     setAvisos(p=>p.filter(a=>a.id!==id));
@@ -3716,7 +3770,7 @@ export default function App(){
     if(error) console.error("[Supabase] Error DELETE aviso:",id,error.message,error);
     else console.log("[Supabase] DELETE aviso ok:",id);
   };
-  const unreadAvisos=user?avisos.filter(a=>(a.destinatarioId==="todos"||a.destinatarioId===user.id)&&!(a.leidoPor||[]).includes(user.id)).length:0;
+  const unreadAvisos=user?avisos.filter(a=>avisoIncludesUser(a,user.id)&&!(a.leidoPor||[]).includes(user.id)).length:0;
 
   const logout=()=>{localStorage.removeItem("taskops_user");sessionStorage.removeItem("taskops_authed_depts");setUser(null);setAuthedDepts([]);setScreen("dash");};
   const openNotif=()=>{const now=new Date().toISOString();localStorage.setItem("taskops_last_notif_view",now);setLastNotifView(now);setScreen("notif");};
@@ -3732,9 +3786,9 @@ export default function App(){
         (t.comments||[]).forEach(c=>{if(c.user?.id!==user.id&&new Date(c.iso||0)>since)n++;});
       }
     });
-    avisos.forEach(a=>{if(a.destinatarioId==="todos"||a.destinatarioId===user.id){if(new Date(a.fecha||0)>since)n++;}});
+    avisos.forEach(a=>{if(avisoIncludesUser(a,user.id)){if(new Date(a.fecha||0)>since)n++;}});
     avisos.forEach(a=>{
-      const isRecipient=a.destinatarioId==="todos"||a.destinatarioId===user.id||a.origen?.id===user.id;
+      const isRecipient=avisoIncludesUser(a,user.id)||a.origen?.id===user.id;
       if(isRecipient)(a.comments||[]).forEach(c=>{if(c.authorId!==user.id&&new Date(c.iso||0)>since)n++;});
     });
     return n;

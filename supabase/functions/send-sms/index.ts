@@ -85,6 +85,10 @@ serve(async (req) => {
         message = `NEXUS: Aviso de ${data.fromName} (${data.fromDept}): ${data.texto}`;
         break;
 
+      case "nuevo_comentario":
+        message = `NEXUS: Nuevo comentario de ${data.commenterName} en "${data.taskTitle}": ${data.commentText}. ${APP}/?task=${data.taskId}`;
+        break;
+
       case "deadline_proximo":
         message = `NEXUS: Tu tarea vence pronto, ${data.userName}. ${data.taskTitle}. Limite: ${data.deadline} (${data.hoursLeft}h). ${APP}/?task=${data.taskId}`;
         break;

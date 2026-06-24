@@ -99,6 +99,10 @@ serve(async (req) => {
           message = `💬 *Aviso de ${data.fromName}* (${data.fromDept}):\n\n${data.texto}`;
           break;
 
+        case "nuevo_comentario":
+          message = `💬 *Nuevo comentario*\nHola ${data.userName}:\n\n📋 *${data.taskTitle}*\n👤 ${data.commenterName}: "${data.commentText}"\n\n👁️ Ver tarea: ${APP}/?task=${data.taskId}`;
+          break;
+
         case "deadline_proximo":
           message = `⚠️ *Tu tarea vence pronto*\nHola ${data.userName}:\n\n📋 *${data.taskTitle}*\n📅 Fecha límite: ${data.deadline} (${data.hoursLeft}h restantes)\n\n🔗 Ver tarea: ${APP}/?task=${data.taskId}`;
           break;
