@@ -512,6 +512,10 @@ function FlowDiagram({invIds,flowStates,flowStageIds,onReorder,onStateChange,can
     if(error){alert("No se pudo generar el enlace de descarga: "+error.message);return;}
     window.open(data.signedUrl,"_blank");
   };
+  const handleDeleteAttachment=async att=>{
+    await supabase.storage.from("task-attachments").remove([att.url]);
+    onAttachmentsChange((attachments||[]).filter(a=>a.url!==att.url));
+  };
   const moveUp=i=>{
     const a=[...invIds];[a[i-1],a[i]]=[a[i],a[i-1]];
     const s=[...sids];[s[i-1],s[i]]=[s[i],s[i-1]];
@@ -621,10 +625,16 @@ function FlowDiagram({invIds,flowStates,flowStageIds,onReorder,onStateChange,can
                             <div style={{fontSize:12,color:"#374151",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{att.nombre}</div>
                             <div style={{fontSize:10,color:T3}}>{att.subidoPor?.name||"—"} · {fmtDT(att.fecha)}</div>
                           </div>
-                          <button onClick={()=>handleDownload(att)}
-                            style={{background:"none",border:`1px solid ${BD}`,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:600,color:fc.c,flexShrink:0,fontFamily:"inherit"}}>
-                            ⬇ Descargar
-                          </button>
+                          <div style={{display:"flex",gap:6,flexShrink:0}}>
+                            <button onClick={()=>handleDownload(att)}
+                              style={{background:"none",border:`1px solid ${BD}`,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:600,color:fc.c,fontFamily:"inherit"}}>
+                              ⬇ Descargar
+                            </button>
+                            <button onClick={()=>handleDeleteAttachment(att)} title="Borrar adjunto"
+                              style={{background:"none",border:`1px solid ${BD}`,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:600,color:"#DC2626",fontFamily:"inherit"}}>
+                              🗑️
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -1701,6 +1711,8 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
   const [showCancelForm,setShowCancelForm]=useState(false);
   const [cancelReason,setCancelReason]=useState("");
   const [showAllLog,setShowAllLog]=useState(false);
+  const [editingCommentIdx,setEditingCommentIdx]=useState(null);
+  const [editCommentText,setEditCommentText]=useState("");
   const recRef=useRef(null);
   const task=useMemo(()=>tasks.find(t=>t.id===taskId)||null,[tasks,taskId]);
 
@@ -1756,6 +1768,19 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
       });
     }
     setComment("");
+  };
+
+  const startEditComment=(i,c)=>{setEditingCommentIdx(i);setEditCommentText(c.text);};
+  const cancelEditComment=()=>{setEditingCommentIdx(null);setEditCommentText("");};
+  const saveEditComment=i=>{
+    if(!editCommentText.trim()) return;
+    const updated=(task?.comments||[]).map((c,idx)=>idx===i?{...c,text:editCommentText.trim(),edited:true}:c);
+    onUpdate(taskId,{comments:updated});
+    setEditingCommentIdx(null);setEditCommentText("");
+  };
+  const deleteComment=i=>{
+    const updated=(task?.comments||[]).filter((_,idx)=>idx!==i);
+    onUpdate(taskId,{comments:updated});
   };
 
   if(!task) return <div style={{padding:40,color:T2}}>Tarea no encontrada</div>;
@@ -2082,15 +2107,38 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
                       </div>
                     </div>
                   );
+                  const isMine=user&&c.user?.id===user.id;
+                  const isEditingThis=editingCommentIdx===i;
                   return(
                     <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start"}}>
                       <Av u={c.user} size={30}/>
                       <div style={{flex:1,background:BG,borderRadius:10,padding:"10px 14px"}}>
-                        <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                        <div style={{display:"flex",justifyContent:"space-between",marginBottom:4,gap:8}}>
                           <span style={{fontSize:12,fontWeight:600,color:T1}}>{c.user?.name}</span>
-                          <span style={{fontSize:11,color:T3}}>{c.time}</span>
+                          <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+                            <span style={{fontSize:11,color:T3}}>{c.time}{c.edited&&" (editado)"}</span>
+                            {isMine&&!isEditingThis&&(
+                              <>
+                                <button onClick={()=>startEditComment(i,c)} title="Editar"
+                                  style={{background:"none",border:"none",color:T3,cursor:"pointer",fontSize:12,padding:0}}>✏️</button>
+                                <button onClick={()=>deleteComment(i)} title="Borrar"
+                                  style={{background:"none",border:"none",color:T3,cursor:"pointer",fontSize:12,padding:0}}>🗑️</button>
+                              </>
+                            )}
+                          </div>
                         </div>
-                        <p style={{fontSize:13,color:T2,lineHeight:1.6}}>{c.text}</p>
+                        {isEditingThis?(
+                          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                            <textarea value={editCommentText} onChange={e=>setEditCommentText(e.target.value)} rows={2} autoFocus
+                              style={{...inp,fontSize:13,padding:"8px 10px",borderRadius:6}}/>
+                            <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+                              <button onClick={cancelEditComment} style={{background:"none",border:`1px solid ${BD}`,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:600,color:T2}}>Cancelar</button>
+                              <button onClick={()=>saveEditComment(i)} disabled={!editCommentText.trim()} style={{background:editCommentText.trim()?PR:"#E2E8F0",color:editCommentText.trim()?"#fff":T3,border:"none",borderRadius:6,padding:"4px 12px",cursor:editCommentText.trim()?"pointer":"default",fontSize:11,fontWeight:600}}>Guardar</button>
+                            </div>
+                          </div>
+                        ):(
+                          <p style={{fontSize:13,color:T2,lineHeight:1.6}}>{c.text}</p>
+                        )}
                       </div>
                     </div>
                   );
@@ -2301,6 +2349,8 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onDeleteAviso,
   const [uploadingAttach,setUploadingAttach]=useState(false);
   const [attachErr,setAttachErr]=useState(null);
   const [commentText,setCommentText]=useState("");
+  const [editingCommentId,setEditingCommentId]=useState(null);
+  const [editCommentText,setEditCommentText]=useState("");
   const [editingAviso,setEditingAviso]=useState(false);
   const [editTexto,setEditTexto]=useState("");
   const [editDestIds,setEditDestIds]=useState([]);
@@ -2376,7 +2426,7 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onDeleteAviso,
   const postAvisoComment=()=>{
     if(!commentText.trim()||!selectedAviso) return;
     const a=selectedAviso;
-    const newComment={text:commentText.trim(),authorId:user.id,authorName:user.name,iso:new Date().toISOString()};
+    const newComment={id:`ac-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,text:commentText.trim(),authorId:user.id,authorName:user.name,iso:new Date().toISOString()};
     setSelectedAviso({...a,comments:[...(a.comments||[]),newComment]});
     setCommentText("");
     // Append atómico server-side: nunca pisa un comentario que otro
@@ -2390,6 +2440,22 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onDeleteAviso,
       ?USERS.map(u=>u.id).filter(id=>id!==user.id)
       :[...new Set([a.origen?.id,...(Array.isArray(destIds)?destIds:[destIds])])].filter(id=>id&&id!==user.id);
     if(recipientIds.length>0) sendPushNotification(recipientIds,pushTitle,newComment.text,`/?aviso=${a.id}`);
+  };
+
+  const editAvisoComment=(commentId,newText)=>{
+    if(!newText.trim()||!selectedAviso) return;
+    const a=selectedAviso;
+    setSelectedAviso({...a,comments:(a.comments||[]).map(c=>c.id===commentId?{...c,text:newText.trim(),edited:true}:c)});
+    supabase.rpc("edit_aviso_comment",{aviso_id:a.id,comment_id:commentId,new_text:newText.trim()})
+      .then(({error})=>{if(error)console.error("[Supabase] Error edit_aviso_comment:",error.message);});
+  };
+
+  const deleteAvisoComment=commentId=>{
+    if(!selectedAviso) return;
+    const a=selectedAviso;
+    setSelectedAviso({...a,comments:(a.comments||[]).filter(c=>c.id!==commentId)});
+    supabase.rpc("delete_aviso_comment",{aviso_id:a.id,comment_id:commentId})
+      .then(({error})=>{if(error)console.error("[Supabase] Error delete_aviso_comment:",error.message);});
   };
 
   const send=()=>{
@@ -2644,15 +2710,41 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onDeleteAviso,
                   {(a.comments||[]).length===0&&(
                     <div style={{fontSize:12,color:T3,fontStyle:"italic"}}>Sin comentarios aún.</div>
                   )}
-                  {(a.comments||[]).map((c,ci)=>(
-                    <div key={ci} style={{background:BG,borderRadius:8,padding:"10px 12px",border:`1px solid ${BD}`}}>
-                      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
-                        <span style={{fontSize:12,fontWeight:700,color:T1}}>{c.authorName}</span>
-                        <span style={{fontSize:10,color:T3}}>{fmtFecha(c.iso)}</span>
+                  {(a.comments||[]).map((c,ci)=>{
+                    const isMine=c.id&&c.authorId===user.id;
+                    const isEditingThis=c.id&&editingCommentId===c.id;
+                    return(
+                    <div key={c.id||ci} style={{background:BG,borderRadius:8,padding:"10px 12px",border:`1px solid ${BD}`}}>
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:4}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          <span style={{fontSize:12,fontWeight:700,color:T1}}>{c.authorName}</span>
+                          <span style={{fontSize:10,color:T3}}>{fmtFecha(c.iso)}{c.edited&&" (editado)"}</span>
+                        </div>
+                        {isMine&&!isEditingThis&&(
+                          <div style={{display:"flex",gap:8,flexShrink:0}}>
+                            <button onClick={()=>{setEditingCommentId(c.id);setEditCommentText(c.text);}} title="Editar"
+                              style={{background:"none",border:"none",color:T3,cursor:"pointer",fontSize:12,padding:0}}>✏️</button>
+                            <button onClick={()=>deleteAvisoComment(c.id)} title="Borrar"
+                              style={{background:"none",border:"none",color:T3,cursor:"pointer",fontSize:12,padding:0}}>🗑️</button>
+                          </div>
+                        )}
                       </div>
-                      <p style={{margin:0,fontSize:13,color:T1,lineHeight:1.6,whiteSpace:"pre-wrap"}}>{c.text}</p>
+                      {isEditingThis?(
+                        <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                          <textarea value={editCommentText} onChange={e=>setEditCommentText(e.target.value)} rows={2} autoFocus
+                            style={{flex:1,borderRadius:6,border:`1px solid ${BD}`,padding:"8px 10px",fontSize:13,color:T1,background:CARD,resize:"vertical",fontFamily:"inherit",outline:"none"}}/>
+                          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+                            <button onClick={()=>{setEditingCommentId(null);setEditCommentText("");}} style={{background:"none",border:`1px solid ${BD}`,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:600,color:T2}}>Cancelar</button>
+                            <button onClick={()=>{editAvisoComment(c.id,editCommentText);setEditingCommentId(null);setEditCommentText("");}} disabled={!editCommentText.trim()}
+                              style={{background:editCommentText.trim()?PR:"#E2E8F0",color:editCommentText.trim()?"#fff":T3,border:"none",borderRadius:6,padding:"4px 12px",cursor:editCommentText.trim()?"pointer":"default",fontSize:11,fontWeight:600}}>Guardar</button>
+                          </div>
+                        </div>
+                      ):(
+                        <p style={{margin:0,fontSize:13,color:T1,lineHeight:1.6,whiteSpace:"pre-wrap"}}>{c.text}</p>
+                      )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
                   <textarea
