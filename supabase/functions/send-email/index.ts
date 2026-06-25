@@ -201,6 +201,43 @@ serve(async (req) => {
         );
         break;
 
+      case "resumen_deadlines": {
+        const proximas = data.proximas || [];
+        const vencidas = data.vencidas || [];
+        subject = `📋 Resumen de deadlines — ${proximas.length} próxima(s), ${vencidas.length} vencida(s)`;
+
+        const rowsHtml = (items: any[], dateKey: string) => items.map((t) => `
+          <tr>
+            <td style="padding:8px 10px;border-bottom:1px solid #E2E8F0;color:#1E1B4B;font-weight:600;">${t.taskTitle}</td>
+            <td style="padding:8px 10px;border-bottom:1px solid #E2E8F0;color:#64748B;">${t.responsible}</td>
+            <td style="padding:8px 10px;border-bottom:1px solid #E2E8F0;color:#64748B;">${dateKey === "deadline" ? t.deadline : `${t.daysLate} día${t.daysLate !== 1 ? "s" : ""}`}</td>
+          </tr>`).join("");
+
+        const sectionHtml = (title: string, color: string, bg: string, items: any[], dateLabel: string, dateKey: string) => items.length === 0 ? "" : `
+          <div style="margin-bottom:20px;">
+            <h3 style="color:${color};font-size:14px;margin:0 0 8px;">${title} (${items.length})</h3>
+            <table style="width:100%;border-collapse:collapse;background:${bg};border-radius:6px;overflow:hidden;">
+              <thead>
+                <tr>
+                  <th style="text-align:left;padding:8px 10px;font-size:11px;color:#94A3B8;border-bottom:1px solid #E2E8F0;">TAREA</th>
+                  <th style="text-align:left;padding:8px 10px;font-size:11px;color:#94A3B8;border-bottom:1px solid #E2E8F0;">RESPONSABLE</th>
+                  <th style="text-align:left;padding:8px 10px;font-size:11px;color:#94A3B8;border-bottom:1px solid #E2E8F0;">${dateLabel}</th>
+                </tr>
+              </thead>
+              <tbody>${rowsHtml(items, dateKey)}</tbody>
+            </table>
+          </div>`;
+
+        html = emailTemplate(
+          "Resumen diario de deadlines",
+          `<p>Hola,</p>
+           <p>Este es el resumen de tareas con deadline próximo o vencido:</p>
+           ${sectionHtml("⏰ Próximas a vencer", "#D97706", "#FFFBEB", proximas, "FECHA LÍMITE", "deadline")}
+           ${sectionHtml("⚠️ Vencidas", "#DC2626", "#FEF2F2", vencidas, "DÍAS VENCIDA", "daysLate")}`
+        );
+        break;
+      }
+
       case "deadline_proximo":
         subject = `⏰ Tarea vence en ${data.hoursLeft}h: ${data.taskTitle}`;
         html = emailTemplate(

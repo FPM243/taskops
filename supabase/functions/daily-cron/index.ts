@@ -80,6 +80,18 @@ async function callSendEmail(type, to, data) {
   }
 }
 
+async function callSendPush(userIds: number[], title: string, body: string, url: string) {
+  if (!userIds || !userIds.length) return;
+  try {
+    const { error } = await supabase.functions.invoke("send-push", {
+      body: { userIds: userIds.map(String), title, body, url },
+    });
+    if (error) console.error("[daily-cron] send-push error:", error.message);
+  } catch (err) {
+    console.error("[daily-cron] Exception invoking send-push:", (err as Error).message);
+  }
+}
+
 serve(async (req) => {
   try {
     // Cargar todas las tareas y usuarios necesarios
@@ -93,33 +105,34 @@ serve(async (req) => {
 
     let deadlineProximoCount = 0;
     let tareaVencidaCount = 0;
+    const proximas = [];
+    const vencidas = [];
 
     for (const task of tasks) {
       if (!isActiveStatus(task.status) || !task.deadline) continue;
 
       const dl = new Date(task.deadline + "T23:59:59");
       const hoursLeft = (dl - now) / (1000 * 60 * 60);
+      const responsibleName = task.responsible?.name || "—";
 
       // --- deadline_proximo: 0 < horas restantes <= 48 ---
       if (hoursLeft > 0 && hoursLeft <= 48) {
         const already = await alreadyNotifiedToday(task.id, "deadline_proximo");
         if (!already) {
-          const notifyIds = [];
-          if (task.responsible?.id) notifyIds.push(task.responsible.id);
-          if (task.creator?.id && task.creator.id !== task.responsible?.id) notifyIds.push(task.creator.id);
-
-          for (const uid of notifyIds) {
-            const u = usersById.get(uid);
-            if (u?.email) {
-              await callSendEmail("deadline_proximo", [u.email], {
-                userName: u.name,
-                taskId: task.id,
-                taskTitle: task.title,
-                deadline: task.deadline,
-                hoursLeft: Math.round(hoursLeft),
-              });
-            }
+          if (task.responsible?.id) {
+            await callSendPush(
+              [task.responsible.id],
+              `⏰ Tarea vence en ${Math.round(hoursLeft)}h`,
+              task.title,
+              `/?task=${task.id}`
+            );
           }
+          proximas.push({
+            taskId: task.id,
+            taskTitle: task.title,
+            responsible: responsibleName,
+            deadline: task.deadline,
+          });
           await logNotification(task.id, "deadline_proximo");
           deadlineProximoCount++;
         }
@@ -130,25 +143,33 @@ serve(async (req) => {
         const daysLate = Math.max(1, Math.ceil(Math.abs(hoursLeft) / 24));
         const already = await alreadyNotifiedToday(task.id, "tarea_vencida");
         if (!already) {
-          const notifyIds = [];
-          if (task.responsible?.id) notifyIds.push(task.responsible.id);
-          if (task.creator?.id && task.creator.id !== task.responsible?.id) notifyIds.push(task.creator.id);
-
-          for (const uid of notifyIds) {
-            const u = usersById.get(uid);
-            if (u?.email) {
-              await callSendEmail("tarea_vencida", [u.email], {
-                userName: u.name,
-                taskId: task.id,
-                taskTitle: task.title,
-                deadline: task.deadline,
-                daysLate,
-              });
-            }
+          if (task.responsible?.id) {
+            await callSendPush(
+              [task.responsible.id],
+              "⚠️ Tarea vencida",
+              task.title,
+              `/?task=${task.id}`
+            );
           }
+          vencidas.push({
+            taskId: task.id,
+            taskTitle: task.title,
+            responsible: responsibleName,
+            daysLate,
+          });
           await logNotification(task.id, "tarea_vencida");
           tareaVencidaCount++;
         }
+      }
+    }
+
+    // Resumen único a Dirección, en vez de un correo por tarea.
+    let resumenEnviado = false;
+    if (proximas.length > 0 || vencidas.length > 0) {
+      const direccionEmails = USERS.filter((u) => u.dept === "Dirección" && u.email).map((u) => u.email);
+      if (direccionEmails.length > 0) {
+        await callSendEmail("resumen_deadlines", direccionEmails, { proximas, vencidas });
+        resumenEnviado = true;
       }
     }
 
@@ -156,6 +177,7 @@ serve(async (req) => {
       ok: true,
       deadlineProximoEnviados: deadlineProximoCount,
       tareaVencidaEnviados: tareaVencidaCount,
+      resumenEnviado,
     };
     console.log("[daily-cron] Resultado:", JSON.stringify(summary));
 
