@@ -5303,7 +5303,6 @@ export default function App(){
   // ════════════════════════════════════════
   const createQuickTask=async data=>{
     const now=new Date();
-    const nextPriority=quickTasks.filter(t=>t.dept===data.dept&&!t.deleted).length+1;
     const qt={
       id:`QT-${now.getTime()}`,
       title:data.title,
@@ -5311,7 +5310,7 @@ export default function App(){
       dept:data.dept,
       createdBy:{id:user.id,name:user.name,dept:user.dept},
       status:"Pendiente",
-      priority:nextPriority,
+      priority:data.priority,
       deadline:data.deadline||null,
       comments:[],
       createdAt:now.toISOString(),
