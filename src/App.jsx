@@ -2748,7 +2748,7 @@ function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDe
             {/* Botones de acción */}
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
               {!selectedTask.deleted&&canEdit(selectedTask)&&(
-                <button onClick={()=>setEditingTask(selectedTask)}
+                <button onClick={()=>{setEditingTask(selectedTask);setSelectedTask(null);}}
                   style={{background:CARD,color:T1,border:`1px solid ${BD}`,padding:"10px 16px",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600}}>
                   ✏️ Editar
                 </button>
