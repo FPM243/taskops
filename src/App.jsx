@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect, Fragment } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback, Fragment } from "react";
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import supabase from "./supabase";
 
@@ -201,6 +201,62 @@ const getAssignableIds = user => {
   if (ids) return [...new Set([user.id, ...ids])];
   return [user.id];
 };
+// ════════════════════════════════════════
+// MÓDULO DE AUSENCIAS — FASE 1
+// ════════════════════════════════════════
+// No hay un campo de rol explícito en USERS (el sistema usa sesión por
+// departamento), así que el permiso para registrar ausencias se mapea por
+// id: son los mismos usuarios que ya actúan como "jefe de depto" en el
+// resto del sistema — Dirección, cada "Gerente de X" y RR.HH.
+const PUEDE_REGISTRAR_AUSENCIAS = [1,2,3,4,5,6,7,10];
+const puedeRegistrarAusencias = user => !!user && PUEDE_REGISTRAR_AUSENCIAS.includes(user.id);
+const esRHAusencias = user => user?.dept === "RR.HH";
+// La columna registrado_por_rol solo acepta 'rh' o 'gerente'; Dirección
+// registra "como gerente" para efectos de esa columna.
+const rolRegistroAusencia = user => esRHAusencias(user) ? "rh" : "gerente";
+
+const TIPO_AUSENCIA_CONFIG = {
+  vacaciones:       {label:"Vacaciones",       bg:"#E1F5EE", text:"#0F6E56"},
+  permiso:          {label:"Permiso",          bg:"#E6F1FB", text:"#185FA5"},
+  dia_asignado:     {label:"Día asignado",     bg:"#FAEEDA", text:"#854F0B"},
+  esquema_reducido: {label:"Esquema reducido", bg:"#EEEDFE", text:"#3C3489"},
+};
+const TIPO_AUSENCIA_ABBR = {vacaciones:"Vac",permiso:"Perm",dia_asignado:"Día",esquema_reducido:"E.Red"};
+const DIAS_SEMANA_OPTS = [{n:1,l:"L"},{n:2,l:"M"},{n:3,l:"X"},{n:4,l:"J"},{n:5,l:"V"}];
+
+// Formatea una fecha local como YYYY-MM-DD sin pasar por toISOString():
+// toISOString() convierte a UTC y puede mostrar el día equivocado para
+// zonas horarias negativas (ej. México, UTC-6) — el mismo problema que
+// safeDate() ya evita en el resto del archivo.
+const fmtISODateLocal = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+const isoWeekday = d => { const wd=d.getDay(); return wd===0?7:wd; };
+
+function diasHabilesAusencia(fechaInicio,fechaFin){
+  if(!fechaInicio||!fechaFin) return 0;
+  let count=0;
+  let current=new Date(fechaInicio+"T12:00:00");
+  const fin=new Date(fechaFin+"T12:00:00");
+  while(current<=fin){
+    const dow=current.getDay();
+    if(dow!==0&&dow!==6) count++;
+    current.setDate(current.getDate()+1);
+  }
+  return count;
+}
+
+const fmtFechaCortaAusencia = fStr => {
+  if(!fStr) return "";
+  const d=new Date(fStr+"T12:00:00");
+  return `${d.getDate()} ${MONTHS_ES[d.getMonth()].slice(0,3)}`;
+};
+const fmtRangoAusencia = (desde,hasta) => {
+  if(!desde) return "";
+  if(!hasta||desde===hasta) return fmtFechaCortaAusencia(desde);
+  const d1=new Date(desde+"T12:00:00"),d2=new Date(hasta+"T12:00:00");
+  if(d1.getMonth()===d2.getMonth()) return `${d1.getDate()}–${d2.getDate()} ${MONTHS_ES[d2.getMonth()].slice(0,3)}`;
+  return `${fmtFechaCortaAusencia(desde)} – ${fmtFechaCortaAusencia(hasta)}`;
+};
+
 const TT = {
   "Operativa":     {c:"#2563EB", bg:"#EFF6FF"},
   "Administrativa":{c:"#7C3AED", bg:"#F5F3FF"},
@@ -689,6 +745,48 @@ function AlertBanner({tasks,onClickOverdue,onClickToday}){
   );
 }
 
+// Mini-widget de ausentes hoy (sidebar/dashboard). Vive aquí porque se usa
+// en ScreenDashboard; consulta el RPC ya creado en Supabase para "hoy" y
+// se refresca cuando cambia `ausencias` (la suscripción Realtime central
+// vive en App() y empuja un nuevo array cada vez que la tabla cambia).
+function AusentesHoyWidget({ausencias,onVerMas,onOpenDetalle}){
+  const [hoyList,setHoyList]=useState([]);
+  useEffect(()=>{
+    const hoy=fmtISODateLocal(new Date());
+    supabase.rpc("get_ausencias_en_rango",{fecha_desde:hoy,fecha_hasta:hoy})
+      .then(({data,error})=>{
+        if(error){console.error("[Supabase] Error get_ausencias_en_rango (hoy):",error.message);return;}
+        setHoyList(data||[]);
+      });
+  },[ausencias]);
+  const visibles=hoyList.slice(0,4);
+  return(
+    <Card sx={{padding:16,marginBottom:20}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:hoyList.length?10:0}}>
+        <div style={{fontSize:12,fontWeight:600,color:T2,letterSpacing:.5}}>📆 AUSENTES HOY{hoyList.length>0?` (${hoyList.length})`:""}</div>
+        {hoyList.length>4&&<button onClick={onVerMas} className="hl" style={{background:"none",border:"none",color:PR,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Ver más →</button>}
+      </div>
+      {hoyList.length===0?(
+        <div style={{fontSize:12,color:T3}}>Nadie ausente hoy.</div>
+      ):(
+        <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+          {visibles.map(a=>{
+            const cfg=TIPO_AUSENCIA_CONFIG[a.tipo]||{};
+            const u=USERS.find(x=>x.name===a.empleado_nombre);
+            return(
+              <div key={a.id} onClick={()=>onOpenDetalle&&onOpenDetalle(a)} style={{display:"flex",alignItems:"center",gap:6,background:cfg.bg,borderRadius:20,padding:"3px 10px 3px 3px",cursor:"pointer"}} className="hl">
+                <Av u={u||{ini:a.empleado_iniciales,uc:cfg.text}} size={22}/>
+                <span style={{fontSize:12,fontWeight:600,color:T1}}>{shortName(a.empleado_nombre)}</span>
+                <span style={{fontSize:10,fontWeight:600,color:cfg.text}}>{cfg.label}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 /* ════════════════════════════════════════
    MODALS
 ════════════════════════════════════════ */
@@ -744,6 +842,122 @@ function DeleteAvisoModal({onConfirm,onCancel}){
         </div>
       </div>
     </div>
+  );
+}
+
+function DeleteAusenciaModal({ausencia,onConfirm,onCancel}){
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,.6)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div style={{background:CARD,borderRadius:16,padding:28,width:"100%",maxWidth:340,boxShadow:SHm,textAlign:"center"}}>
+        <div style={{fontSize:40,marginBottom:16}}>🗑️</div>
+        <h3 style={{fontSize:16,fontWeight:700,color:T1,marginBottom:8}}>¿Eliminar esta ausencia?</h3>
+        <p style={{fontSize:13,color:T2,marginBottom:4}}>{ausencia.empleado_nombre}</p>
+        <p style={{fontSize:12,color:T3,marginBottom:4}}>{TIPO_AUSENCIA_CONFIG[ausencia.tipo]?.label} · {ausencia.fecha_efectiva}</p>
+        <p style={{fontSize:12,color:"#DC2626",marginBottom:20}}>Esta acción no se puede deshacer.</p>
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={onCancel} style={{flex:1,background:BG,border:`1px solid ${BD}`,color:T2,padding:"11px",borderRadius:8,fontSize:13,cursor:"pointer",fontWeight:500}}>Cancelar</button>
+          <button onClick={onConfirm} style={{flex:1,background:"#DC2626",color:"#fff",border:"none",padding:"11px",borderRadius:8,fontSize:13,fontWeight:700,cursor:"pointer"}}>Eliminar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Modal de detalle universal para ausencias
+function ModalDetalleAusencia({ausencia,onClose,onEditar,onEliminar,user}){
+  const cfg=TIPO_AUSENCIA_CONFIG[ausencia.tipo];
+  const esRH=esRHAusencias(user);
+  const [showDeleteConfirm,setShowDeleteConfirm]=useState(false);
+
+  return(
+    <>
+      <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,.7)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:24}} onClick={onClose}>
+        <div style={{background:CARD,borderRadius:16,padding:28,width:"100%",maxWidth:480,boxShadow:SHm}} onClick={e=>e.stopPropagation()}>
+          {/* Header */}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20}}>
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <div style={{width:48,height:48,borderRadius:"50%",background:dc(ausencia.departamento),color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700,flexShrink:0}}>
+                {ausencia.empleado_iniciales}
+              </div>
+              <div>
+                <div style={{fontSize:16,fontWeight:700,color:T1}}>{ausencia.empleado_nombre}</div>
+                <div style={{fontSize:12,color:T3}}>{ausencia.departamento}</div>
+              </div>
+            </div>
+            <button onClick={onClose} style={{background:"none",border:"none",color:T3,cursor:"pointer",fontSize:22,lineHeight:1,padding:0}}>×</button>
+          </div>
+
+          {/* Tipo */}
+          <div style={{marginBottom:16}}>
+            <div style={{fontSize:10,fontWeight:600,color:T3,marginBottom:6,letterSpacing:.5}}>TIPO DE AUSENCIA</div>
+            <div style={{background:cfg.bg,color:cfg.text,padding:"6px 12px",borderRadius:8,fontSize:13,fontWeight:600,display:"inline-block"}}>
+              {cfg.label}
+            </div>
+          </div>
+
+          {/* Fechas */}
+          <div style={{marginBottom:16}}>
+            <div style={{fontSize:10,fontWeight:600,color:T3,marginBottom:6,letterSpacing:.5}}>FECHAS</div>
+            <div style={{fontSize:13,color:T1}}>
+              {ausencia.fecha_efectiva}
+              {ausencia.recurrencia&&ausencia.recurrencia!=="ninguna"&&<span style={{color:T3,marginLeft:8}}>({ausencia.recurrencia})</span>}
+            </div>
+          </div>
+
+          {/* Horas (si aplica) */}
+          {(ausencia.hora_entrada||ausencia.hora_salida)&&(
+            <div style={{marginBottom:16}}>
+              <div style={{fontSize:10,fontWeight:600,color:T3,marginBottom:6,letterSpacing:.5}}>HORARIO</div>
+              <div style={{fontSize:13,color:T1}}>
+                {ausencia.hora_entrada&&<span>Entrada: {ausencia.hora_entrada.slice(0,5)}</span>}
+                {ausencia.hora_entrada&&ausencia.hora_salida&&<span style={{margin:"0 8px"}}>·</span>}
+                {ausencia.hora_salida&&<span>Salida: {ausencia.hora_salida.slice(0,5)}</span>}
+              </div>
+            </div>
+          )}
+
+          {/* Tipo de permiso (si aplica) */}
+          {ausencia.tipo==="permiso"&&ausencia.tipo_permiso&&(
+            <div style={{marginBottom:16}}>
+              <div style={{fontSize:10,fontWeight:600,color:T3,marginBottom:6,letterSpacing:.5}}>DETALLE</div>
+              <div style={{fontSize:13,color:T1}}>
+                {ausencia.tipo_permiso==="entrada_tarde"?"Entrada tarde":"Salida temprana"}
+                {ausencia.hora_permiso&&<span> a las {ausencia.hora_permiso.slice(0,5)}</span>}
+              </div>
+            </div>
+          )}
+
+          {/* Registrado por */}
+          <div style={{marginBottom:16,paddingTop:16,borderTop:`1px solid ${BD}`}}>
+            <div style={{fontSize:10,fontWeight:600,color:T3,marginBottom:6,letterSpacing:.5}}>REGISTRADO POR</div>
+            <div style={{fontSize:13,color:T2}}>
+              {ausencia.registrado_por} · {ausencia.registrado_por_rol==="rh"?"RH":"Gerente"}
+            </div>
+          </div>
+
+          {/* Nota interna (solo RH) */}
+          {esRH&&ausencia.nota_interna&&(
+            <div style={{marginBottom:16,padding:12,background:BG,borderRadius:8,borderLeft:`3px solid ${PR}`}}>
+              <div style={{fontSize:10,fontWeight:600,color:T3,marginBottom:6,letterSpacing:.5}}>NOTA INTERNA (SOLO RH)</div>
+              <div style={{fontSize:12,color:T2}}>{ausencia.nota_interna}</div>
+            </div>
+          )}
+
+          {/* Botones (solo RH) */}
+          {esRH&&(
+            <div style={{display:"flex",gap:10,marginTop:20}}>
+              <button onClick={onEditar} style={{flex:1,background:PR,color:"#fff",border:"none",padding:"11px",borderRadius:8,fontSize:13,fontWeight:600,cursor:"pointer"}}>
+                ✏️ Editar
+              </button>
+              <button onClick={()=>setShowDeleteConfirm(true)} style={{flex:1,background:"#DC2626",color:"#fff",border:"none",padding:"11px",borderRadius:8,fontSize:13,fontWeight:600,cursor:"pointer"}}>
+                🗑️ Eliminar
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+      {showDeleteConfirm&&<DeleteAusenciaModal ausencia={ausencia} onConfirm={onEliminar} onCancel={()=>setShowDeleteConfirm(false)}/>}
+    </>
   );
 }
 
@@ -811,12 +1025,278 @@ function ScreenLogin({onLogin,onBack}){
   );
 }
 
+// Componente: FormularioAusencia
+function FormularioAusencia({user,onClose,onSave,ausenciaEditar}){
+  const modoEdicion=!!ausenciaEditar;
+
+  // Precargar datos si estamos en modo edición
+  const empInit=modoEdicion?USERS.find(u=>u.name===ausenciaEditar.empleado_nombre)?.id||"":"";
+  const [empleadoId,setEmpleadoId]=useState(empInit);
+  const [tipo,setTipo]=useState(modoEdicion?ausenciaEditar.tipo:"vacaciones");
+  const [fechaInicio,setFechaInicio]=useState(modoEdicion?ausenciaEditar.fecha_efectiva:"");
+  const [fechaFin,setFechaFin]=useState(modoEdicion?(ausenciaEditar.fecha_fin||ausenciaEditar.fecha_efectiva):"");
+  const [horaPermiso,setHoraPermiso]=useState(modoEdicion?(ausenciaEditar.hora_permiso||""):"");
+  const [tipoPermiso,setTipoPermiso]=useState(modoEdicion?(ausenciaEditar.tipo_permiso||"entrada_tarde"):"entrada_tarde");
+  const [horaEntrada,setHoraEntrada]=useState(modoEdicion?(ausenciaEditar.hora_entrada||""):"");
+  const [horaSalida,setHoraSalida]=useState(modoEdicion?(ausenciaEditar.hora_salida||""):"");
+  const [recurrencia,setRecurrencia]=useState(modoEdicion?(ausenciaEditar.recurrencia||"ninguna"):"ninguna");
+  const [diasSemana,setDiasSemana]=useState(modoEdicion?(ausenciaEditar.dias_semana||[]):[]);
+  const [notaInterna,setNotaInterna]=useState(modoEdicion?(ausenciaEditar.nota_interna||""):"");
+  const [saving,setSaving]=useState(false);
+  const [error,setError]=useState("");
+
+  const empleado=USERS.find(u=>u.id===parseInt(empleadoId));
+
+  // Calcular días hábiles para vacaciones
+  const diasHabiles=useMemo(()=>{
+    if(tipo!=="vacaciones"||!fechaInicio||!fechaFin)return 0;
+    const inicio=new Date(fechaInicio+"T12:00:00");
+    const fin=new Date(fechaFin+"T12:00:00");
+    let count=0,current=new Date(inicio);
+    while(current<=fin){
+      const dow=current.getDay();
+      if(dow!==0&&dow!==6)count++;
+      current.setDate(current.getDate()+1);
+    }
+    return count;
+  },[tipo,fechaInicio,fechaFin]);
+
+  // Vista previa
+  const vistaPrevia=useMemo(()=>{
+    if(!empleado||!tipo)return "";
+    const cfg=TIPO_AUSENCIA_CONFIG[tipo];
+    let texto=`${empleado.name} · ${cfg.label}`;
+    if(tipo==="vacaciones"&&fechaInicio&&fechaFin){
+      const fi=new Date(fechaInicio+"T12:00:00");
+      const ff=new Date(fechaFin+"T12:00:00");
+      texto+=` · ${fi.getDate()}/${fi.getMonth()+1}–${ff.getDate()}/${ff.getMonth()+1}`;
+      if(diasHabiles>0)texto+=` · ${diasHabiles} día${diasHabiles>1?"s":""}`;
+    }else if(tipo==="permiso"&&fechaInicio&&horaPermiso){
+      const fi=new Date(fechaInicio+"T12:00:00");
+      texto+=` · ${fi.getDate()}/${fi.getMonth()+1} · ${tipoPermiso==="entrada_tarde"?"Entrada tarde":"Salida temprana"} ${horaPermiso}`;
+    }else if((tipo==="dia_asignado"||tipo==="esquema_reducido")&&fechaInicio){
+      const fi=new Date(fechaInicio+"T12:00:00");
+      texto+=` · desde ${fi.getDate()}/${fi.getMonth()+1}`;
+      if(fechaFin){
+        const ff=new Date(fechaFin+"T12:00:00");
+        texto+=` hasta ${ff.getDate()}/${ff.getMonth()+1}`;
+      }
+      if(diasSemana.length>0){
+        const labels=diasSemana.map(n=>DIAS_SEMANA_OPTS.find(d=>d.n===n)?.l).join(",");
+        texto+=` · ${labels}`;
+      }
+      if(recurrencia!=="ninguna")texto+=` · ${recurrencia}`;
+    }
+    return texto;
+  },[empleado,tipo,fechaInicio,fechaFin,horaPermiso,tipoPermiso,recurrencia,diasSemana,diasHabiles]);
+
+  // Validaciones
+  const validar=()=>{
+    if(!empleado){setError("Selecciona un empleado");return false;}
+    if(!tipo){setError("Selecciona un tipo de ausencia");return false;}
+    if(!fechaInicio){setError("Selecciona la fecha de inicio");return false;}
+    const fi=new Date(fechaInicio+"T12:00:00");
+    const hoy=new Date();hoy.setHours(0,0,0,0);
+    const hace30Dias=new Date();hace30Dias.setDate(hace30Dias.getDate()-30);hace30Dias.setHours(0,0,0,0);
+    if(fi<hace30Dias){setError("La fecha de inicio no puede estar más de 30 días en el pasado");return false;}
+    if(tipo==="vacaciones"&&!fechaFin){setError("Selecciona la fecha de fin");return false;}
+    if(fechaFin){
+      const ff=new Date(fechaFin+"T12:00:00");
+      if(ff<fi){setError("La fecha de fin debe ser posterior o igual a la de inicio");return false;}
+    }
+    if(tipo==="permiso"&&!horaPermiso){setError("Ingresa la hora del permiso");return false;}
+    if((tipo==="dia_asignado"||tipo==="esquema_reducido")&&diasSemana.length===0){
+      setError("Selecciona al menos un día de la semana");return false;
+    }
+    if((tipo==="dia_asignado"||tipo==="esquema_reducido")&&recurrencia==="ninguna"){
+      setError("Para días asignados o esquema reducido, la recurrencia es obligatoria");return false;
+    }
+    return true;
+  };
+
+  const handleGuardar=async()=>{
+    if(!validar())return;
+
+    // Validar que el usuario exista
+    if(!user){
+      setError("No hay usuario autenticado");
+      console.error("[FormularioAusencia] No user found");
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+
+    const payload={
+      empleado_nombre:empleado.name,
+      empleado_iniciales:empleado.ini,
+      departamento:empleado.dept,
+      tipo,
+      fecha_inicio:fechaInicio, // Ya es string 'YYYY-MM-DD'
+      fecha_fin:tipo==="permiso"?fechaInicio:(fechaFin||fechaInicio),
+      hora_permiso:tipo==="permiso"?horaPermiso:null,
+      tipo_permiso:tipo==="permiso"?tipoPermiso:null,
+      hora_entrada:(tipo==="permiso"||tipo==="esquema_reducido")?(horaEntrada||null):null,
+      hora_salida:(tipo==="permiso"||tipo==="esquema_reducido")?(horaSalida||null):null,
+      recurrencia:tipo==="vacaciones"?"ninguna":(recurrencia||"ninguna"),
+      dias_semana:(tipo==="dia_asignado"||tipo==="esquema_reducido")?(diasSemana.length>0?diasSemana:null):null,
+      nota_interna:notaInterna.trim()||null,
+      registrado_por:user.name||"Usuario",
+      registrado_por_rol:rolRegistroAusencia(user)||"gerente",
+    };
+
+    console.log(`[FormularioAusencia] Payload a ${modoEdicion?"actualizar":"insertar"}:`,payload);
+
+    let data,err;
+    if(modoEdicion){
+      // UPDATE
+      const res=await supabase.from("ausencias").update(payload).eq("id",ausenciaEditar.id);
+      data=res.data;
+      err=res.error;
+    }else{
+      // INSERT
+      const res=await supabase.from("ausencias").insert(payload);
+      data=res.data;
+      err=res.error;
+    }
+
+    setSaving(false);
+
+    if(err){
+      const errorMsg=`Error al guardar: ${err.message}`;
+      setError(errorMsg);
+      console.error(`[Supabase] Error ${modoEdicion?"UPDATE":"INSERT"} ausencias:`,err);
+      console.error("[Supabase] Error details:",{
+        message:err.message,
+        details:err.details,
+        hint:err.hint,
+        code:err.code,
+        payload
+      });
+      return;
+    }
+
+    console.log(`[Supabase] ${modoEdicion?"UPDATE":"INSERT"} ausencias exitoso:`,data);
+
+    // Esperar a que se recarguen los datos antes de cerrar
+    console.log("[FormularioAusencia] Llamando a onSave para recargar datos...");
+    await onSave();
+    console.log("[FormularioAusencia] Datos recargados, cerrando modal");
+  };
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,.7)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:24,overflowY:"auto"}}>
+      <div style={{background:CARD,borderRadius:16,padding:28,width:"100%",maxWidth:520,boxShadow:SHm,maxHeight:"90vh",overflowY:"auto"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+          <div style={{fontSize:16,fontWeight:700,color:T1}}>{modoEdicion?"Editar ausencia":"Nueva ausencia"}</div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:T3,cursor:"pointer",fontSize:22,lineHeight:1,padding:0}}>×</button>
+        </div>
+
+        {/* Empleado */}
+        <Lbl ch="EMPLEADO"/>
+        <select value={empleadoId} onChange={e=>setEmpleadoId(e.target.value)} style={{...inp,marginBottom:16}}>
+          <option value="">Selecciona...</option>
+          {USERS.map(u=><option key={u.id} value={u.id}>{u.name} ({u.dept})</option>)}
+        </select>
+
+        {/* Tipo */}
+        <Lbl ch="TIPO DE AUSENCIA"/>
+        <select value={tipo} onChange={e=>{setTipo(e.target.value);setRecurrencia(e.target.value==="vacaciones"?"ninguna":"ninguna");}} style={{...inp,marginBottom:16}}>
+          {Object.entries(TIPO_AUSENCIA_CONFIG).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
+        </select>
+
+        {/* Fecha inicio */}
+        <Lbl ch="FECHA INICIO"/>
+        <input type="date" value={fechaInicio} onChange={e=>setFechaInicio(e.target.value)} style={{...inp,marginBottom:16}}/>
+
+        {/* Fecha fin (no para permiso) */}
+        {tipo!=="permiso"&&(<>
+          <Lbl ch={tipo==="vacaciones"?"FECHA FIN (obligatorio)":"FECHA FIN (opcional)"}/>
+          <input type="date" value={fechaFin} onChange={e=>setFechaFin(e.target.value)} style={{...inp,marginBottom:16}}/>
+        </>)}
+
+        {/* Permiso: hora y tipo */}
+        {tipo==="permiso"&&(<>
+          <Lbl ch="TIPO DE PERMISO"/>
+          <select value={tipoPermiso} onChange={e=>setTipoPermiso(e.target.value)} style={{...inp,marginBottom:16}}>
+            <option value="entrada_tarde">Entrada tarde</option>
+            <option value="salida_temprana">Salida temprana</option>
+          </select>
+          <Lbl ch="HORA"/>
+          <input type="time" value={horaPermiso} onChange={e=>setHoraPermiso(e.target.value)} style={{...inp,marginBottom:16}}/>
+          <Lbl ch="HORA DE ENTRADA (opcional)"/>
+          <input type="time" value={horaEntrada} onChange={e=>setHoraEntrada(e.target.value)} style={{...inp,marginBottom:16}}/>
+          <Lbl ch="HORA DE SALIDA (opcional)"/>
+          <input type="time" value={horaSalida} onChange={e=>setHoraSalida(e.target.value)} style={{...inp,marginBottom:16}}/>
+        </>)}
+
+        {/* Día asignado / esquema reducido: días de semana + recurrencia */}
+        {(tipo==="dia_asignado"||tipo==="esquema_reducido")&&(<>
+          <Lbl ch="DÍAS DE LA SEMANA"/>
+          <div style={{display:"flex",gap:8,marginBottom:16}}>
+            {DIAS_SEMANA_OPTS.map(d=>(
+              <button key={d.n} onClick={()=>setDiasSemana(p=>p.includes(d.n)?p.filter(x=>x!==d.n):[...p,d.n])}
+                style={{background:diasSemana.includes(d.n)?PR:BG,color:diasSemana.includes(d.n)?"#fff":T2,border:`1px solid ${diasSemana.includes(d.n)?PR:BD}`,width:40,height:40,borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600,transition:"all .12s"}}>
+                {d.l}
+              </button>
+            ))}
+          </div>
+          <Lbl ch="RECURRENCIA (obligatorio)"/>
+          <select value={recurrencia} onChange={e=>setRecurrencia(e.target.value)} style={{...inp,marginBottom:16}}>
+            <option value="ninguna">Ninguna</option>
+            <option value="semanal">Semanal</option>
+            <option value="quincenal">Quincenal</option>
+            <option value="mensual">Mensual</option>
+          </select>
+          {tipo==="esquema_reducido"&&(<>
+            <Lbl ch="HORA DE ENTRADA (opcional)"/>
+            <input type="time" value={horaEntrada} onChange={e=>setHoraEntrada(e.target.value)} style={{...inp,marginBottom:16}}/>
+            <Lbl ch="HORA DE SALIDA (opcional)"/>
+            <input type="time" value={horaSalida} onChange={e=>setHoraSalida(e.target.value)} style={{...inp,marginBottom:16}}/>
+          </>)}
+        </>)}
+
+        {/* Vacaciones: mostrar días hábiles calculados */}
+        {tipo==="vacaciones"&&fechaInicio&&fechaFin&&diasHabiles>0&&(
+          <div style={{padding:10,background:PRl+"40",borderRadius:8,marginBottom:16,fontSize:12,color:PR,fontWeight:600}}>
+            📆 {diasHabiles} día{diasHabiles>1?"s":""} hábil{diasHabiles>1?"es":""}
+          </div>
+        )}
+
+        {/* Nota interna */}
+        <Lbl ch="NOTA INTERNA (solo visible para RH)"/>
+        <textarea value={notaInterna} onChange={e=>setNotaInterna(e.target.value)} placeholder="Ej. aprobado por gerente vía email..." style={{...inp,minHeight:60,resize:"vertical",marginBottom:16}}/>
+
+        {/* Vista previa */}
+        {vistaPrevia&&(
+          <div style={{padding:12,background:BG,borderRadius:8,marginBottom:16,fontSize:12,color:T2}}>
+            <div style={{fontSize:10,fontWeight:600,color:T3,marginBottom:4}}>VISTA PREVIA</div>
+            {vistaPrevia}
+          </div>
+        )}
+
+        {/* Error */}
+        {error&&<div style={{padding:10,background:"#FEF2F2",border:"1px solid #FCA5A5",borderRadius:8,fontSize:12,color:"#DC2626",marginBottom:16}}>{error}</div>}
+
+        {/* Botones */}
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={onClose} disabled={saving} style={{flex:1,background:BG,border:`1px solid ${BD}`,color:T2,padding:"11px",borderRadius:8,fontSize:13,cursor:saving?"not-allowed":"pointer",fontWeight:500}}>Cancelar</button>
+          <button onClick={handleGuardar} disabled={saving} style={{flex:1,background:saving?"#94A3B8":PR,color:"#fff",border:"none",padding:"11px",borderRadius:8,fontSize:13,fontWeight:700,cursor:saving?"not-allowed":"pointer"}}>
+            {saving?"Guardando...":"Guardar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ════════════════════════════════════════
    SCREEN: DASHBOARD
 ════════════════════════════════════════ */
-function ScreenDashboard({tasks,user,onStatClick,onDeptClick,onPickerDeptClick,onTaskClick,onNewTask,onSearch,onStats,onMyTasks,onCalendar,onDelays,onDeleted,onStuck,userIsAuthed,onRequestAuth,deptIsAuthed,dbConnected,onAvisos,unreadAvisos,isGuest,onLogin,onNotif,onLogout,unreadNotif}){
+function ScreenDashboard({tasks,user,onStatClick,onDeptClick,onPickerDeptClick,onTaskClick,onNewTask,onSearch,onStats,onMyTasks,onCalendar,onDelays,onDeleted,onStuck,userIsAuthed,onRequestAuth,deptIsAuthed,dbConnected,onAvisos,unreadAvisos,isGuest,onLogin,onNotif,onLogout,unreadNotif,onAusencias,ausencias,cargarAusencias}){
   const [pickerOpen,setPickerOpen]=useState(false);
   const [tab,setTab]=useState("active");
+  const [detalleAusencia,setDetalleAusencia]=useState(null);
   const isMobile=useIsMobile();
 
   const deptCards=useMemo(()=>DEPTS.map(dept=>{
@@ -881,6 +1361,10 @@ function ScreenDashboard({tasks,user,onStatClick,onDeptClick,onPickerDeptClick,o
             🔔
             {unreadAvisos>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#DC2626",color:"#fff",borderRadius:20,fontSize:9,fontWeight:700,padding:"1px 6px",lineHeight:"14px",minWidth:16,textAlign:"center"}}>{unreadAvisos}</span>}
           </button>}
+          {!isGuest&&<button onClick={onAusencias} style={{background:"none",border:`1px solid ${BD}`,borderRadius:20,width:36,height:36,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0,transition:"all .15s"}}
+            className="ub" title="Ausencias">
+            📆
+          </button>}
           <div title={dbConnected===null?"Conectando a Supabase...":dbConnected?"Supabase conectado":"Error de conexión con Supabase"}
             style={{display:"flex",alignItems:"center",gap:5,padding:"3px 9px",borderRadius:20,border:`1px solid ${dbConnected===null?BD:dbConnected?"#A7F3D0":"#FECACA"}`,background:dbConnected===null?BG:dbConnected?"#ECFDF5":"#FEF2F2"}}>
             <div style={{width:6,height:6,borderRadius:"50%",background:dbConnected===null?"#94A3B8":dbConnected?"#059669":"#DC2626",
@@ -920,6 +1404,7 @@ function ScreenDashboard({tasks,user,onStatClick,onDeptClick,onPickerDeptClick,o
       <AlertBanner tasks={tasks} onClickOverdue={()=>onStatClick("vencidas")} onClickToday={()=>onStatClick("today")}/>
 
       <div style={{maxWidth:1100,margin:"0 auto",padding:"20px 24px"}}>
+        <AusentesHoyWidget ausencias={ausencias} onVerMas={onAusencias} onOpenDetalle={setDetalleAusencia}/>
         {/* Tabs */}
         <div style={{display:"flex",gap:8,marginBottom:20}}>
           {[["active","Activas"],["done","Completadas"]].map(([v,l])=>(
@@ -1041,6 +1526,7 @@ function ScreenDashboard({tasks,user,onStatClick,onDeptClick,onPickerDeptClick,o
         style={{position:"fixed",bottom:28,right:28,background:userIsAuthed?PR:"#94A3B8",color:"#fff",border:"none",width:56,height:56,fontSize:26,cursor:"pointer",borderRadius:"50%",boxShadow:"0 4px 20px rgba(67,56,202,.35)",zIndex:40,lineHeight:1}}>
         {userIsAuthed?"+":"🔒"}
       </button>}
+      {detalleAusencia&&<ModalDetalleAusencia ausencia={detalleAusencia} onClose={()=>setDetalleAusencia(null)} user={user} onEditar={()=>{/* TODO */}} onEliminar={async()=>{/* TODO */}}/>}
     </div>
   );
 }
@@ -1183,6 +1669,388 @@ function ScreenSearch({tasks,user,onBack,onTaskClick,avisos,onAvisoClick}){
         {total>0&&<div style={{textAlign:"center",marginTop:12,fontSize:12,color:T3}}>{total} resultado{total!==1?"s":""}</div>}
       </div>
     </div>
+  );
+}
+
+/* ════════════════════════════════════════
+   SCREEN: AUSENCIAS
+════════════════════════════════════════ */
+function ScreenAusencias({user,ausencias,onBack,cargarAusencias}){
+  const [vistaActual,setVistaActual]=useState("semanal"); // "semanal" | "mensual"
+  const [formOpen,setFormOpen]=useState(false);
+  const [filtroDept,setFiltroDept]=useState(null);
+  const [detalleAusencia,setDetalleAusencia]=useState(null);
+  const [ausenciaEditar,setAusenciaEditar]=useState(null);
+  const isMobile=useIsMobile();
+
+  // Filtrar ausencias según departamento seleccionado
+  const ausenciasFiltradas=useMemo(()=>{
+    if(!filtroDept) return ausencias;
+    return ausencias.filter(a=>a.departamento===filtroDept);
+  },[ausencias,filtroDept]);
+
+  // Calcular métricas
+  const metricas=useMemo(()=>{
+    const today=fmtISODateLocal(new Date());
+    const hoy=ausenciasFiltradas.filter(a=>a.fecha_efectiva===today);
+    const porTipo={
+      vacaciones:hoy.filter(a=>a.tipo==="vacaciones").length,
+      permiso:hoy.filter(a=>a.tipo==="permiso").length,
+      dia_asignado:hoy.filter(a=>a.tipo==="dia_asignado").length,
+      esquema_reducido:hoy.filter(a=>a.tipo==="esquema_reducido").length,
+    };
+    return{total:hoy.length,...porTipo};
+  },[ausenciasFiltradas]);
+
+  const puedeRegistrar=puedeRegistrarAusencias(user);
+
+  return(
+    <div style={{minHeight:"100vh",background:BG}}>
+      <NavBar
+        left={<><BackBtn onClick={onBack}/><div style={{fontWeight:700,fontSize:15,color:T1}}>Ausencias</div></>}
+        center={null}
+        right={<div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <button onClick={()=>setVistaActual("semanal")}
+            style={{background:vistaActual==="semanal"?PR:CARD,color:vistaActual==="semanal"?"#fff":T2,border:`1px solid ${vistaActual==="semanal"?PR:BD}`,padding:"6px 12px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600,transition:"all .15s"}}>
+            Semanal
+          </button>
+          <button onClick={()=>setVistaActual("mensual")}
+            style={{background:vistaActual==="mensual"?PR:CARD,color:vistaActual==="mensual"?"#fff":T2,border:`1px solid ${vistaActual==="mensual"?PR:BD}`,padding:"6px 12px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600,transition:"all .15s"}}>
+            Mensual
+          </button>
+          {puedeRegistrar&&<button onClick={()=>setFormOpen(true)}
+            style={{background:PR,color:"#fff",border:"none",padding:"6px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600,...fnt}}>
+            + Nueva ausencia
+          </button>}
+        </div>}
+      />
+
+      <div style={{maxWidth:1200,margin:"0 auto",padding:"24px"}}>
+        {/* Métricas */}
+        <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(5,minmax(0,1fr))",gap:12,marginBottom:24}}>
+          {[
+            {key:"total",c:PR,bg:PRl,icon:"👥",label:"Ausentes hoy"},
+            {key:"vacaciones",c:TIPO_AUSENCIA_CONFIG.vacaciones.text,bg:TIPO_AUSENCIA_CONFIG.vacaciones.bg,icon:"🏖️",label:"Vacaciones"},
+            {key:"permiso",c:TIPO_AUSENCIA_CONFIG.permiso.text,bg:TIPO_AUSENCIA_CONFIG.permiso.bg,icon:"🕐",label:"Permisos"},
+            {key:"dia_asignado",c:TIPO_AUSENCIA_CONFIG.dia_asignado.text,bg:TIPO_AUSENCIA_CONFIG.dia_asignado.bg,icon:"📅",label:"Día asignado"},
+            {key:"esquema_reducido",c:TIPO_AUSENCIA_CONFIG.esquema_reducido.text,bg:TIPO_AUSENCIA_CONFIG.esquema_reducido.bg,icon:"⏱️",label:"Esq. reducido"},
+          ].map(m=>(
+            <Card key={m.key} sx={{padding:"14px 16px",borderTop:`3px solid ${m.c}`}}>
+              <div style={{fontSize:11,color:T3,marginBottom:4}}>{m.label}</div>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <div style={{fontSize:20}}>{m.icon}</div>
+                <div style={{fontSize:28,fontWeight:700,color:m.c,lineHeight:1}}>{metricas[m.key]}</div>
+              </div>
+            </Card>
+          ))}
+        </div>
+
+        {/* Filtros por departamento */}
+        <Card sx={{padding:16,marginBottom:20}}>
+          <div style={{fontSize:11,fontWeight:600,color:T3,marginBottom:10,letterSpacing:.5}}>FILTRAR POR DEPARTAMENTO</div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            <button onClick={()=>setFiltroDept(null)}
+              style={{background:!filtroDept?PR:CARD,color:!filtroDept?"#fff":T2,border:`1px solid ${!filtroDept?PR:BD}`,padding:"4px 10px",borderRadius:20,cursor:"pointer",fontSize:11,fontWeight:500,transition:"all .12s"}}>
+              Todos
+            </button>
+            {DEPTS.map(dept=>(
+              <button key={dept} onClick={()=>setFiltroDept(dept)}
+                style={{background:filtroDept===dept?dc(dept):CARD,color:filtroDept===dept?"#fff":T2,border:`1px solid ${filtroDept===dept?dc(dept):BD}`,padding:"4px 10px",borderRadius:20,cursor:"pointer",fontSize:11,fontWeight:500,transition:"all .12s",display:"flex",alignItems:"center",gap:6}}>
+                <div style={{width:7,height:7,borderRadius:"50%",background:dc(dept)}}/>
+                {dept}
+              </button>
+            ))}
+          </div>
+        </Card>
+
+        {/* Calendario */}
+        {vistaActual==="semanal"&&<CalendarioSemanal ausencias={ausenciasFiltradas} user={user} onOpenDetalle={setDetalleAusencia}/>}
+        {vistaActual==="mensual"&&<CalendarioMensual ausencias={ausenciasFiltradas} user={user} onOpenDetalle={setDetalleAusencia}/>}
+      </div>
+
+      {/* Formulario modal */}
+      {formOpen&&<FormularioAusencia user={user} onClose={()=>setFormOpen(false)} ausenciaEditar={ausenciaEditar} onSave={async()=>{
+        await cargarAusencias();
+        setFormOpen(false);
+        setAusenciaEditar(null);
+      }}/>}
+      {/* Modal de detalle */}
+      {detalleAusencia&&<ModalDetalleAusencia
+        ausencia={detalleAusencia}
+        onClose={()=>setDetalleAusencia(null)}
+        user={user}
+        onEditar={()=>{setAusenciaEditar(detalleAusencia);setDetalleAusencia(null);setFormOpen(true);}}
+        onEliminar={async()=>{
+          const{error}=await supabase.from("ausencias").delete().eq("id",detalleAusencia.id);
+          if(error){console.error("[Supabase] Error DELETE ausencia:",error);alert("Error al eliminar: "+error.message);return;}
+          console.log("[Supabase] DELETE ausencia ok:",detalleAusencia.id);
+          setDetalleAusencia(null);
+          await cargarAusencias();
+        }}
+      />}
+    </div>
+  );
+}
+
+// Componente: CalendarioSemanal
+function CalendarioSemanal({ausencias,user,onOpenDetalle}){
+  const [fecha,setFecha]=useState(new Date());
+  const isMobile=useIsMobile();
+
+  // Calcular lunes de la semana actual
+  const getLunesDeSemanaDe=(d)=>{
+    const copia=new Date(d);
+    const dayOfWeek=copia.getDay();
+    const diff=dayOfWeek===0?-6:1-dayOfWeek; // Si es domingo, retroceder 6 días
+    copia.setDate(copia.getDate()+diff);
+    return copia;
+  };
+
+  const lunes=useMemo(()=>getLunesDeSemanaDe(fecha),[fecha]);
+  const diasSemana=useMemo(()=>{
+    const arr=[];
+    for(let i=0;i<5;i++){
+      const d=new Date(lunes);
+      d.setDate(lunes.getDate()+i);
+      arr.push(d);
+    }
+    return arr;
+  },[lunes]);
+
+  // Filtrar ausencias de la semana actual
+  const ausenciasSemana=useMemo(()=>{
+    const desde=fmtISODateLocal(diasSemana[0]);
+    const hasta=fmtISODateLocal(diasSemana[4]);
+    return ausencias.filter(a=>a.fecha_efectiva>=desde&&a.fecha_efectiva<=hasta);
+  },[ausencias,diasSemana]);
+
+  // Agrupar por empleado
+  const empleados=useMemo(()=>{
+    const map=new Map();
+    ausenciasSemana.forEach(a=>{
+      const key=`${a.empleado_nombre}|${a.departamento}`;
+      if(!map.has(key)){
+        map.set(key,{nombre:a.empleado_nombre,iniciales:a.empleado_iniciales,departamento:a.departamento,ausencias:[]});
+      }
+      map.get(key).ausencias.push(a);
+    });
+    return Array.from(map.values()).sort((a,b)=>a.nombre.localeCompare(b.nombre));
+  },[ausenciasSemana]);
+
+  const prevSemana=()=>{const d=new Date(fecha);d.setDate(d.getDate()-7);setFecha(d);};
+  const nextSemana=()=>{const d=new Date(fecha);d.setDate(d.getDate()+7);setFecha(d);};
+  const irHoy=()=>setFecha(new Date());
+
+  const hoy=fmtISODateLocal(new Date());
+  const esRH=esRHAusencias(user);
+
+  return(
+    <Card sx={{padding:20}}>
+      {/* Navegación */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+        <div style={{fontSize:14,fontWeight:600,color:T1}}>
+          Semana del {diasSemana[0].getDate()} al {diasSemana[4].getDate()} de {MONTHS_ES[diasSemana[0].getMonth()]} {diasSemana[0].getFullYear()}
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={prevSemana} className="nb" style={{padding:"6px 10px"}}>←</button>
+          <button onClick={irHoy} className="nb" style={{padding:"6px 12px",fontSize:11}}>Hoy</button>
+          <button onClick={nextSemana} className="nb" style={{padding:"6px 10px"}}>→</button>
+        </div>
+      </div>
+
+      {empleados.length===0?(
+        <div style={{padding:40,textAlign:"center",color:T3,fontSize:13}}>No hay ausencias registradas para esta semana</div>
+      ):(
+        <div style={{overflowX:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"separate",borderSpacing:"0 8px"}}>
+            <thead>
+              <tr>
+                <th style={{textAlign:"left",padding:"8px 12px",fontSize:11,fontWeight:600,color:T3,position:"sticky",left:0,background:CARD,zIndex:2}}>EMPLEADO</th>
+                {diasSemana.map((d,i)=>{
+                  const esHoy=fmtISODateLocal(d)===hoy;
+                  return(
+                    <th key={i} style={{textAlign:"center",padding:"8px 12px",fontSize:11,fontWeight:600,color:esHoy?PR:T3,background:esHoy?PRl+"80":undefined,borderRadius:esHoy?"8px 8px 0 0":undefined}}>
+                      {DAYS_ES[i]}<br/>{d.getDate()}
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {empleados.map((emp,idx)=>(
+                <tr key={idx} style={{background:idx%2===0?BG:CARD}}>
+                  <td style={{padding:"12px",borderRadius:"8px 0 0 8px",position:"sticky",left:0,background:idx%2===0?BG:CARD,zIndex:1}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <div style={{width:32,height:32,borderRadius:"50%",background:dc(emp.departamento),color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,flexShrink:0}}>
+                        {emp.iniciales}
+                      </div>
+                      <div>
+                        <div style={{fontSize:12,fontWeight:600,color:T1,whiteSpace:"nowrap"}}>{emp.nombre}</div>
+                        <div style={{fontSize:10,color:T3}}>{emp.departamento}</div>
+                      </div>
+                    </div>
+                  </td>
+                  {diasSemana.map((d,i)=>{
+                    const fechaStr=fmtISODateLocal(d);
+                    const ausDelDia=emp.ausencias.filter(a=>a.fecha_efectiva===fechaStr);
+                    const esHoy=fechaStr===hoy;
+                    return(
+                      <td key={i} style={{textAlign:"center",padding:"8px",background:esHoy?PRl+"40":undefined,borderRadius:i===4?"0 8px 8px 0":undefined}}>
+                        {ausDelDia.length>0&&(
+                          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                            {ausDelDia.map((a,j)=>{
+                              const cfg=TIPO_AUSENCIA_CONFIG[a.tipo];
+                              return(
+                                <div key={j} onClick={()=>onOpenDetalle&&onOpenDetalle(a)}
+                                  style={{background:cfg.bg,color:cfg.text,padding:"4px 8px",borderRadius:6,fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}
+                                  className="hl">
+                                  {TIPO_AUSENCIA_ABBR[a.tipo]}
+                                  {a.tipo==="permiso"&&a.hora_permiso&&<span style={{fontSize:9,marginLeft:2}}>({a.hora_permiso.slice(0,5)})</span>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+    </Card>
+  );
+}
+
+// Componente: CalendarioMensual
+function CalendarioMensual({ausencias,user,onOpenDetalle}){
+  const now=new Date();
+  const [month,setMonth]=useState(now.getMonth());
+  const [year,setYear]=useState(now.getFullYear());
+  const [verMasDia,setVerMasDia]=useState(null);
+  const isMobile=useIsMobile();
+
+  const prevMonth=()=>{if(month===0){setMonth(11);setYear(y=>y-1);}else setMonth(m=>m-1);};
+  const nextMonth=()=>{if(month===11){setMonth(0);setYear(y=>y+1);}else setMonth(m=>m+1);};
+
+  // Agrupar ausencias por fecha
+  const ausenciasPorFecha=useMemo(()=>{
+    const map=new Map();
+    ausencias.forEach(a=>{
+      const d=new Date(a.fecha_efectiva+"T12:00:00");
+      if(d.getMonth()===month&&d.getFullYear()===year){
+        const key=a.fecha_efectiva;
+        if(!map.has(key))map.set(key,[]);
+        map.get(key).push(a);
+      }
+    });
+    return map;
+  },[ausencias,month,year]);
+
+  const firstDayOfMonth=new Date(year,month,1).getDay();
+  const daysInMonth=new Date(year,month+1,0).getDate();
+  const todayDay=now.getDate(),todayMonth=now.getMonth(),todayYear=now.getFullYear();
+  const isToday=(d)=>d===todayDay&&month===todayMonth&&year===todayYear;
+
+  // Build grid
+  const cells=[];
+  for(let i=0;i<firstDayOfMonth;i++)cells.push(null);
+  for(let d=1;d<=daysInMonth;d++)cells.push(d);
+  while(cells.length%7!==0)cells.push(null);
+
+  const esRH=esRHAusencias(user);
+
+  return(
+    <Card sx={{padding:20}}>
+      {/* Navegación */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+        <div style={{fontSize:14,fontWeight:600,color:T1}}>
+          {MONTHS_ES[month]} {year}
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={prevMonth} className="nb" style={{padding:"6px 10px"}}>←</button>
+          <button onClick={()=>{setMonth(now.getMonth());setYear(now.getFullYear());}} className="nb" style={{padding:"6px 12px",fontSize:11}}>Hoy</button>
+          <button onClick={nextMonth} className="nb" style={{padding:"6px 10px"}}>→</button>
+        </div>
+      </div>
+
+      {/* Day labels */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:8,marginBottom:8}}>
+        {DAYS_ES.map(d=><div key={d} style={{textAlign:"center",fontSize:11,fontWeight:600,color:T3,padding:"4px 0"}}>{d}</div>)}
+      </div>
+
+      {/* Calendar grid */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:8}}>
+        {cells.map((day,i)=>{
+          if(!day)return<div key={i}/>;
+          const fechaStr=`${year}-${String(month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+          const ausDelDia=ausenciasPorFecha.get(fechaStr)||[];
+          const today=isToday(day);
+          return(
+            <div key={i}
+              style={{borderRadius:8,padding:8,minHeight:100,background:today?PRl+"30":"transparent",border:today?`2px solid ${PR}`:`1px solid ${BD}`,position:"relative"}}>
+              <div style={{fontSize:12,fontWeight:today?700:500,color:today?PR:T1,marginBottom:6}}>{day}</div>
+              {ausDelDia.length>0&&(
+                <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                  {ausDelDia.slice(0,3).map((a,j)=>{
+                    const cfg=TIPO_AUSENCIA_CONFIG[a.tipo];
+                    return(
+                      <div key={j} onClick={()=>onOpenDetalle&&onOpenDetalle(a)}
+                        style={{background:cfg.bg,color:cfg.text,padding:"3px 6px",borderRadius:4,fontSize:9,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}
+                        className="hl">
+                        {a.empleado_iniciales} · {TIPO_AUSENCIA_ABBR[a.tipo]}
+                      </div>
+                    );
+                  })}
+                  {ausDelDia.length>3&&(
+                    <div style={{fontSize:9,color:T3,fontWeight:600,padding:"2px 6px",background:BG,borderRadius:4,cursor:"pointer"}}
+                      onClick={()=>setVerMasDia({fecha:fechaStr,ausencias:ausDelDia})}>
+                      +{ausDelDia.length-3} más
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Modal "Ver más" del día */}
+      {verMasDia&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,.7)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:24}} onClick={()=>setVerMasDia(null)}>
+          <div style={{background:CARD,borderRadius:16,padding:24,width:"100%",maxWidth:420,maxHeight:"80vh",overflowY:"auto",boxShadow:SHm}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+              <div style={{fontSize:15,fontWeight:700,color:T1}}>Ausencias del {verMasDia.fecha}</div>
+              <button onClick={()=>setVerMasDia(null)} style={{background:"none",border:"none",color:T3,cursor:"pointer",fontSize:22,lineHeight:1,padding:0}}>×</button>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              {verMasDia.ausencias.map((a,i)=>{
+                const cfg=TIPO_AUSENCIA_CONFIG[a.tipo];
+                return(
+                  <div key={i} onClick={()=>{setVerMasDia(null);onOpenDetalle&&onOpenDetalle(a);}} style={{padding:12,background:BG,borderRadius:8,borderLeft:`3px solid ${cfg.text}`,cursor:"pointer"}} className="hl">
+                    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                      <div style={{width:32,height:32,borderRadius:"50%",background:dc(a.departamento),color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700}}>
+                        {a.empleado_iniciales}
+                      </div>
+                      <div>
+                        <div style={{fontSize:13,fontWeight:600,color:T1}}>{a.empleado_nombre}</div>
+                        <div style={{fontSize:10,color:T3}}>{a.departamento}</div>
+                      </div>
+                    </div>
+                    <div style={{background:cfg.bg,color:cfg.text,padding:"4px 10px",borderRadius:6,fontSize:11,fontWeight:600,display:"inline-block"}}>
+                      {cfg.label}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -3286,6 +4154,7 @@ export default function App(){
   const [dbReady,       setDbReady]      = useState(false);
   const [dbConnected,   setDbConnected]  = useState(null);
   const [avisos,        setAvisos]       = useState([]);
+  const [ausencias,     setAusencias]    = useState([]);
   const [deletedTasks,  setDeletedTasks] = useState([]);
   const [saveError,     setSaveError]    = useState(null);
   const [lastNotifView, setLastNotifView]= useState(()=>localStorage.getItem("taskops_last_notif_view")||null);
@@ -3296,6 +4165,15 @@ export default function App(){
   useEffect(()=>{
     try{sessionStorage.setItem("taskops_authed_depts",JSON.stringify(authedDepts));}catch(e){}
   },[authedDepts]);
+
+  // Resync: si la tarea abierta cambia en el array `tasks` (p.ej. llega un
+  // cambio de estado o comentario nuevo por Realtime), refleja la versión viva
+  // en vez de quedarse con la foto local tomada al abrirlo.
+  useEffect(()=>{
+    if(!selTask) return;
+    const fresh=tasks.find(t=>t.id===selTask.id);
+    if(fresh&&fresh!==selTask) setSelTask(fresh);
+  },[tasks,selTask]);
 
   // Supabase avisos: carga + realtime
   useEffect(()=>{
@@ -3315,6 +4193,32 @@ export default function App(){
       .subscribe();
     return ()=>supabase.removeChannel(ch);
   },[]);
+
+  // Función para cargar ausencias (±6 meses)
+  const cargarAusencias=useCallback(()=>{
+    const desde=new Date();desde.setMonth(desde.getMonth()-6);
+    const hasta=new Date();hasta.setMonth(hasta.getMonth()+6);
+    supabase.rpc("get_ausencias_en_rango",{
+      fecha_desde:fmtISODateLocal(desde),
+      fecha_hasta:fmtISODateLocal(hasta)
+    }).then(({data,error})=>{
+      if(error){console.error("[Supabase] Error get_ausencias_en_rango:",error.message);return;}
+      console.log(`[Supabase] Ausencias cargadas — ${data?.length||0} registros`);
+      setAusencias(data||[]);
+    });
+  },[]);
+
+  // Supabase ausencias: carga inicial + realtime
+  useEffect(()=>{
+    cargarAusencias();
+    const ch=supabase.channel("ausencias-realtime")
+      .on("postgres_changes",{event:"*",schema:"public",table:"ausencias"},()=>{
+        console.log("[Supabase] Cambio detectado en tabla ausencias — recargando...");
+        cargarAusencias();
+      })
+      .subscribe();
+    return ()=>supabase.removeChannel(ch);
+  },[cargarAusencias]);
 
   // Service Worker: registrar y detectar actualizaciones, sin interrumpir
   // al usuario a media tarea (ej. mientras llena el formulario de crear tarea).
@@ -3961,6 +4865,8 @@ export default function App(){
 
   if(screen==="notif"&&user) return <><style>{CSS}</style><ScreenNotificaciones tasks={tasks} avisos={avisos} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"notif")} onAvisoClick={a=>{setSelAviso(a);setScreen("avisos");}}/></>;
 
+  if(screen==="ausencias") return <><style>{CSS}</style><ScreenAusencias user={user} ausencias={ausencias} onBack={()=>setScreen("dash")} cargarAusencias={cargarAusencias}/></>;
+
   return(
     <>
       <style>{CSS}</style>
@@ -3982,6 +4888,9 @@ export default function App(){
         deptIsAuthed={canAddInDept}
         dbConnected={dbConnected}
         onAvisos={()=>setScreen("avisos")}
+        onAusencias={()=>setScreen("ausencias")}
+        ausencias={ausencias}
+        cargarAusencias={cargarAusencias}
         unreadAvisos={unreadAvisos}
         isGuest={!user}
         onLogin={()=>setScreen("login")}
