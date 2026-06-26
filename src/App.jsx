@@ -1293,7 +1293,7 @@ function FormularioAusencia({user,onClose,onSave,ausenciaEditar}){
 /* ════════════════════════════════════════
    SCREEN: DASHBOARD
 ════════════════════════════════════════ */
-function ScreenDashboard({tasks,user,onStatClick,onDeptClick,onPickerDeptClick,onTaskClick,onNewTask,onSearch,onStats,onMyTasks,onCalendar,onDelays,onDeleted,onStuck,userIsAuthed,onRequestAuth,deptIsAuthed,dbConnected,onAvisos,unreadAvisos,isGuest,onLogin,onNotif,onLogout,unreadNotif,onAusencias,ausencias,cargarAusencias}){
+function ScreenDashboard({tasks,user,onStatClick,onDeptClick,onPickerDeptClick,onTaskClick,onNewTask,onSearch,onStats,onMyTasks,onCalendar,onDelays,onDeleted,onStuck,userIsAuthed,onRequestAuth,deptIsAuthed,dbConnected,onAvisos,unreadAvisos,isGuest,onLogin,onNotif,onLogout,unreadNotif,onAusencias,onQuickTasks,quickTasksCount,ausencias,cargarAusencias}){
   const [pickerOpen,setPickerOpen]=useState(false);
   const [tab,setTab]=useState("active");
   const [detalleAusencia,setDetalleAusencia]=useState(null);
@@ -1364,6 +1364,11 @@ function ScreenDashboard({tasks,user,onStatClick,onDeptClick,onPickerDeptClick,o
           {!isGuest&&<button onClick={onAusencias} style={{background:"none",border:`1px solid ${BD}`,borderRadius:20,width:36,height:36,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0,transition:"all .15s"}}
             className="ub" title="Ausencias">
             📆
+          </button>}
+          {!isGuest&&<button onClick={onQuickTasks} style={{position:"relative",background:"none",border:`1px solid ${BD}`,borderRadius:20,width:36,height:36,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0,transition:"all .15s"}}
+            className="ub" title="Tareas Rápidas">
+            ⚡
+            {quickTasksCount>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#3B82F6",color:"#fff",borderRadius:20,fontSize:9,fontWeight:700,padding:"1px 6px",lineHeight:"14px",minWidth:16,textAlign:"center"}}>{quickTasksCount}</span>}
           </button>}
           <div title={dbConnected===null?"Conectando a Supabase...":dbConnected?"Supabase conectado":"Error de conexión con Supabase"}
             style={{display:"flex",alignItems:"center",gap:5,padding:"3px 9px",borderRadius:20,border:`1px solid ${dbConnected===null?BD:dbConnected?"#A7F3D0":"#FECACA"}`,background:dbConnected===null?BG:dbConnected?"#ECFDF5":"#FEF2F2"}}>
@@ -2562,6 +2567,505 @@ function ScreenDeptDetail({dept,tasks,user,onBack,onTaskClick,onNewTask,canAdd,o
         </div>
         {deptTasks.length===0&&<div style={{textAlign:"center",padding:"60px 0",color:T3,fontSize:14}}>Sin tareas con este filtro</div>}
         {deptTasks.map(t=><TRow key={t.id} t={t} onClick={()=>onTaskClick(t)}/>)}
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════
+   SCREEN: TAREAS RÁPIDAS
+════════════════════════════════════════ */
+function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDeleteTask,onRestoreTask}){
+  const [filter,setFilter]=useState("active"); // "active" | "all" | "pending" | "in_progress" | "completed" | "deleted"
+  const [selectedTask,setSelectedTask]=useState(null);
+  const [showCreateForm,setShowCreateForm]=useState(false);
+  const [editingTask,setEditingTask]=useState(null);
+  const [commentText,setCommentText]=useState("");
+  const [showDeleteConfirm,setShowDeleteConfirm]=useState(false);
+  const [deleteReason,setDeleteReason]=useState("");
+  const isMobile=useIsMobile();
+
+  const isDireccion=user?.dept==="Dirección";
+
+  // Filtrar tareas según el filtro activo
+  const filteredTasks=useMemo(()=>{
+    let base=quickTasks;
+    if(!isDireccion){
+      base=base.filter(t=>t.dept===user?.dept);
+    }
+    if(filter==="deleted") return base.filter(t=>t.deleted);
+    if(filter==="active") return base.filter(t=>!t.deleted&&t.status!=="Completada");
+    if(filter==="pending") return base.filter(t=>!t.deleted&&t.status==="Pendiente");
+    if(filter==="in_progress") return base.filter(t=>!t.deleted&&t.status==="En proceso");
+    if(filter==="completed") return base.filter(t=>!t.deleted&&t.status==="Completada");
+    return base.filter(t=>!t.deleted); // "all"
+  },[quickTasks,filter,isDireccion,user?.dept]);
+
+  // Agrupar por departamento (solo para Dirección)
+  const groupedByDept=useMemo(()=>{
+    if(!isDireccion) return null;
+    const groups={};
+    filteredTasks.forEach(t=>{
+      if(!groups[t.dept]) groups[t.dept]=[];
+      groups[t.dept].push(t);
+    });
+    // Ordenar cada grupo por prioridad
+    Object.keys(groups).forEach(dept=>{
+      groups[dept].sort((a,b)=>a.priority-b.priority);
+    });
+    return groups;
+  },[isDireccion,filteredTasks]);
+
+  // Resync: si la tarea abierta cambia en el array quickTasks, actualizar
+  useEffect(()=>{
+    if(!selectedTask) return;
+    const fresh=quickTasks.find(t=>t.id===selectedTask.id);
+    if(fresh&&fresh!==selectedTask) setSelectedTask(fresh);
+  },[quickTasks,selectedTask]);
+
+  const handleChangePriority=(task,direction)=>{
+    if(!isDireccion&&task.createdBy?.id!==user?.id) return;
+    const tasksInDept=quickTasks.filter(t=>t.dept===task.dept&&!t.deleted).sort((a,b)=>a.priority-b.priority);
+    const idx=tasksInDept.findIndex(t=>t.id===task.id);
+    if(idx===-1) return;
+    if(direction==="up"&&idx===0) return;
+    if(direction==="down"&&idx===tasksInDept.length-1) return;
+    const swapIdx=direction==="up"?idx-1:idx+1;
+    const tempPriority=task.priority;
+    onUpdateTask(task.id,{priority:tasksInDept[swapIdx].priority});
+    onUpdateTask(tasksInDept[swapIdx].id,{priority:tempPriority});
+  };
+
+  const handleSendComment=()=>{
+    if(!commentText.trim()) return;
+    const now=new Date();
+    const c={
+      user:{id:user.id,name:user.name},
+      text:commentText,
+      time:now.toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"})+" "+now.toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"}),
+      iso:now.toISOString()
+    };
+    onUpdateTask(selectedTask.id,{comments:[...(selectedTask.comments||[]),c]});
+    setCommentText("");
+  };
+
+  const handleDelete=()=>{
+    if(!deleteReason.trim()){
+      alert("El motivo es obligatorio");
+      return;
+    }
+    const now=new Date();
+    onDeleteTask(selectedTask.id,{
+      deleted:true,
+      deletedAt:now.toISOString(),
+      deletedBy:{id:user.id,name:user.name},
+      deleteReason:deleteReason.trim()
+    });
+    setShowDeleteConfirm(false);
+    setDeleteReason("");
+    setSelectedTask(null);
+  };
+
+  const handleRestore=(task)=>{
+    onRestoreTask(task.id,{deleted:false,deletedAt:null,deletedBy:null,deleteReason:null});
+  };
+
+  const canEdit=(task)=>isDireccion||task.createdBy?.id===user?.id;
+  const canDelete=(task)=>isDireccion||task.createdBy?.id===user?.id;
+
+  const priorityColor=(p)=>({1:"#DC2626",2:"#D97706",3:"#059669"}[p]||"#64748B");
+  const priorityLabel=(p)=>({1:"Alta",2:"Media",3:"Baja"}[p]||"—");
+
+  const statusColor=(s)=>({
+    "Pendiente":"#94A3B8",
+    "En proceso":"#3B82F6",
+    "Completada":"#059669"
+  }[s]||"#94A3B8");
+
+  if(selectedTask){
+    return(
+      <div style={{minHeight:"100vh",background:BG}}>
+        <NavBar
+          left={<button onClick={()=>setSelectedTask(null)} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:T1}}>←</button>}
+          center={<span style={{fontSize:14,fontWeight:600,color:T1}}>Detalle de tarea rápida</span>}
+          right={null}
+        />
+        <div style={{maxWidth:800,margin:"0 auto",padding:"20px 24px"}}>
+          <Card sx={{padding:20}}>
+            {/* Título y estado */}
+            <div style={{marginBottom:20}}>
+              <div style={{fontSize:18,fontWeight:700,color:T1,marginBottom:8}}>{selectedTask.title}</div>
+              <div style={{fontSize:13,color:T2,marginBottom:12}}>{selectedTask.description||"Sin descripción"}</div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+                <Badge ch={priorityLabel(selectedTask.priority)} c={priorityColor(selectedTask.priority)} bg={priorityColor(selectedTask.priority)+"15"}/>
+                <Badge ch={selectedTask.dept} c={dc(selectedTask.dept)} bg={dc(selectedTask.dept)+"15"}/>
+                {selectedTask.deadline&&<Badge ch={`📅 ${new Date(selectedTask.deadline).toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"})}`} c={T2} bg={BG}/>}
+                <div style={{fontSize:11,color:T3}}>Creada por: {selectedTask.createdBy?.name||"—"}</div>
+              </div>
+            </div>
+
+            {/* Botones de estado */}
+            {!selectedTask.deleted&&(
+              <div style={{marginBottom:20}}>
+                <div style={{fontSize:12,fontWeight:600,color:T2,marginBottom:8}}>Estado</div>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                  {["Pendiente","En proceso","Completada"].map(st=>(
+                    <button key={st} onClick={()=>onUpdateTask(selectedTask.id,{status:st,completedAt:st==="Completada"?new Date().toISOString():null})}
+                      style={{background:selectedTask.status===st?statusColor(st):CARD,color:selectedTask.status===st?"#fff":T2,border:`1px solid ${selectedTask.status===st?statusColor(st):BD}`,padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:500,transition:"all .12s"}}>
+                      {st}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Comentarios */}
+            {!selectedTask.deleted&&(
+              <div style={{marginBottom:20}}>
+                <div style={{fontSize:12,fontWeight:600,color:T2,marginBottom:8}}>Comentarios ({(selectedTask.comments||[]).length})</div>
+                <div style={{maxHeight:300,overflowY:"auto",marginBottom:12}}>
+                  {(selectedTask.comments||[]).map((c,i)=>(
+                    <div key={i} style={{background:BG,borderRadius:8,padding:10,marginBottom:8}}>
+                      <div style={{fontSize:11,fontWeight:600,color:T1,marginBottom:2}}>{c.user?.name||"—"}</div>
+                      <div style={{fontSize:12,color:T2,marginBottom:4}}>{c.text}</div>
+                      <div style={{fontSize:10,color:T3}}>{c.time}</div>
+                    </div>
+                  ))}
+                  {(selectedTask.comments||[]).length===0&&<div style={{fontSize:12,color:T3,fontStyle:"italic"}}>Sin comentarios</div>}
+                </div>
+                <div style={{display:"flex",gap:8}}>
+                  <input type="text" value={commentText} onChange={e=>setCommentText(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleSendComment()}
+                    placeholder="Escribe un comentario..."
+                    style={{flex:1,padding:"10px 12px",borderRadius:8,border:`1px solid ${BD}`,fontSize:13,background:CARD,color:T1}}/>
+                  <button onClick={handleSendComment} disabled={!commentText.trim()}
+                    style={{background:commentText.trim()?PR:"#94A3B8",color:"#fff",border:"none",padding:"10px 16px",borderRadius:8,cursor:commentText.trim()?"pointer":"not-allowed",fontSize:13,fontWeight:600}}>
+                    Enviar
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Botones de acción */}
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              {!selectedTask.deleted&&canEdit(selectedTask)&&(
+                <button onClick={()=>setEditingTask(selectedTask)}
+                  style={{background:CARD,color:T1,border:`1px solid ${BD}`,padding:"10px 16px",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600}}>
+                  ✏️ Editar
+                </button>
+              )}
+              {!selectedTask.deleted&&canDelete(selectedTask)&&(
+                <button onClick={()=>setShowDeleteConfirm(true)}
+                  style={{background:"#FEF2F2",color:"#DC2626",border:"1px solid #FCA5A5",padding:"10px 16px",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600}}>
+                  🗑️ Eliminar
+                </button>
+              )}
+              {selectedTask.deleted&&canEdit(selectedTask)&&(
+                <button onClick={()=>handleRestore(selectedTask)}
+                  style={{background:"#ECFDF5",color:"#059669",border:"1px solid #A7F3D0",padding:"10px 16px",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600}}>
+                  ♻️ Restaurar
+                </button>
+              )}
+            </div>
+
+            {/* Información de eliminación */}
+            {selectedTask.deleted&&(
+              <div style={{marginTop:20,padding:12,background:"#FEF2F2",border:"1px solid #FCA5A5",borderRadius:8}}>
+                <div style={{fontSize:12,fontWeight:600,color:"#DC2626",marginBottom:4}}>Tarea eliminada</div>
+                <div style={{fontSize:11,color:"#991B1B"}}>
+                  <div>Eliminada por: {selectedTask.deletedBy?.name||"—"}</div>
+                  <div>Fecha: {selectedTask.deletedAt?new Date(selectedTask.deletedAt).toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}):"—"}</div>
+                  <div>Motivo: {selectedTask.deleteReason||"—"}</div>
+                </div>
+              </div>
+            )}
+          </Card>
+        </div>
+
+        {/* Modal de confirmación de eliminación */}
+        {showDeleteConfirm&&(
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:20}}>
+            <div style={{background:CARD,borderRadius:12,padding:24,maxWidth:400,width:"100%"}}>
+              <div style={{fontSize:16,fontWeight:700,color:T1,marginBottom:12}}>Confirmar eliminación</div>
+              <div style={{fontSize:13,color:T2,marginBottom:16}}>Esta acción marcará la tarea como eliminada. Podrás restaurarla después si es necesario.</div>
+              <div style={{marginBottom:16}}>
+                <label style={{fontSize:12,fontWeight:600,color:T2,marginBottom:6,display:"block"}}>Motivo (obligatorio)</label>
+                <textarea value={deleteReason} onChange={e=>setDeleteReason(e.target.value)}
+                  placeholder="Explica por qué se elimina esta tarea..."
+                  style={{width:"100%",padding:10,borderRadius:8,border:`1px solid ${BD}`,fontSize:13,background:BG,color:T1,minHeight:80,resize:"vertical"}}/>
+              </div>
+              <div style={{display:"flex",gap:10}}>
+                <button onClick={()=>{setShowDeleteConfirm(false);setDeleteReason("");}}
+                  style={{flex:1,background:CARD,color:T2,border:`1px solid ${BD}`,padding:"10px",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600}}>
+                  Cancelar
+                </button>
+                <button onClick={handleDelete} disabled={!deleteReason.trim()}
+                  style={{flex:1,background:deleteReason.trim()?"#DC2626":"#94A3B8",color:"#fff",border:"none",padding:"10px",borderRadius:8,cursor:deleteReason.trim()?"pointer":"not-allowed",fontSize:13,fontWeight:600}}>
+                  Eliminar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if(showCreateForm||editingTask){
+    return <QuickTaskForm user={user} task={editingTask} onSave={(data)=>{
+      if(editingTask){
+        onUpdateTask(editingTask.id,data);
+        setEditingTask(null);
+      }else{
+        onCreateTask(data);
+        setShowCreateForm(false);
+      }
+    }} onCancel={()=>{setShowCreateForm(false);setEditingTask(null);}}/>;
+  }
+
+  // Vista principal: lista de tareas
+  return(
+    <div style={{minHeight:"100vh",background:BG}}>
+      <NavBar
+        left={<button onClick={onBack} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:T1}}>←</button>}
+        center={<span style={{fontSize:14,fontWeight:600,color:T1}}>⚡ Tareas Rápidas</span>}
+        right={<button onClick={()=>setShowCreateForm(true)}
+          style={{background:PR,color:"#fff",border:"none",padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>
+          + Nueva
+        </button>}
+      />
+
+      <div style={{maxWidth:1100,margin:"0 auto",padding:"20px 24px"}}>
+        {/* Filtros */}
+        <div style={{display:"flex",gap:8,marginBottom:20,flexWrap:"wrap"}}>
+          {[
+            ["active","Activas"],
+            ["all","Todas"],
+            ["pending","Pendientes"],
+            ["in_progress","En proceso"],
+            ["completed","Completadas"],
+            ["deleted","Eliminadas"]
+          ].map(([v,l])=>(
+            <button key={v} onClick={()=>setFilter(v)}
+              style={{background:filter===v?PR:CARD,color:filter===v?"#fff":T2,border:`1px solid ${filter===v?PR:BD}`,padding:"7px 14px",borderRadius:20,cursor:"pointer",fontSize:12,fontWeight:500,transition:"all .12s"}}>
+              {l}
+            </button>
+          ))}
+        </div>
+
+        {/* Lista de tareas */}
+        {filter==="deleted"?(
+          // Vista de eliminadas
+          <div>
+            {filteredTasks.length===0&&<div style={{fontSize:13,color:T3,fontStyle:"italic",textAlign:"center",padding:40}}>No hay tareas eliminadas</div>}
+            {filteredTasks.map(task=>(
+              <Card key={task.id} sx={{padding:16,marginBottom:12,borderLeft:"4px solid #DC2626"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,flexWrap:"wrap"}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:14,fontWeight:600,color:T1,marginBottom:4}}>{task.title}</div>
+                    <div style={{fontSize:11,color:T3,marginBottom:8}}>
+                      Eliminada por: {task.deletedBy?.name||"—"} • {task.deletedAt?new Date(task.deletedAt).toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"}):"—"}
+                    </div>
+                    <div style={{fontSize:12,color:T2}}>Motivo: {task.deleteReason||"—"}</div>
+                  </div>
+                  <div style={{display:"flex",gap:8}}>
+                    <button onClick={()=>setSelectedTask(task)}
+                      style={{background:CARD,color:T2,border:`1px solid ${BD}`,padding:"6px 12px",borderRadius:8,cursor:"pointer",fontSize:11,fontWeight:600}}>
+                      Ver
+                    </button>
+                    {canEdit(task)&&(
+                      <button onClick={()=>handleRestore(task)}
+                        style={{background:"#ECFDF5",color:"#059669",border:"1px solid #A7F3D0",padding:"6px 12px",borderRadius:8,cursor:"pointer",fontSize:11,fontWeight:600}}>
+                        Restaurar
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        ):isDireccion&&groupedByDept?(
+          // Vista agrupada por departamento (Dirección)
+          <div>
+            {Object.keys(groupedByDept).length===0&&<div style={{fontSize:13,color:T3,fontStyle:"italic",textAlign:"center",padding:40}}>No hay tareas</div>}
+            {Object.keys(groupedByDept).sort().map(dept=>(
+              <div key={dept} style={{marginBottom:24}}>
+                <div style={{fontSize:14,fontWeight:700,color:T1,marginBottom:12,display:"flex",alignItems:"center",gap:8}}>
+                  <div style={{width:10,height:10,borderRadius:"50%",background:dc(dept)}}/>
+                  {dept} ({groupedByDept[dept].length})
+                </div>
+                {groupedByDept[dept].map((task,idx)=>(
+                  <Card key={task.id} cls="dc" sx={{padding:16,marginBottom:8,borderLeft:`4px solid ${priorityColor(task.priority)}`}} onClick={()=>setSelectedTask(task)}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:14,fontWeight:600,color:T1,marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{task.title}</div>
+                        <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                          <Badge ch={priorityLabel(task.priority)} c={priorityColor(task.priority)} bg={priorityColor(task.priority)+"15"}/>
+                          <Badge ch={task.status} c={statusColor(task.status)} bg={statusColor(task.status)+"15"}/>
+                          {task.deadline&&<Badge ch={new Date(task.deadline).toLocaleDateString("es-MX",{day:"2-digit",month:"short"})} c={T3} bg={BG}/>}
+                          <span style={{fontSize:10,color:T3}}>Por: {task.createdBy?.name||"—"}</span>
+                        </div>
+                      </div>
+                      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                        <button onClick={(e)=>{e.stopPropagation();handleChangePriority(task,"up");}} disabled={idx===0}
+                          style={{background:idx===0?"#E2E8F0":CARD,color:idx===0?T3:T1,border:`1px solid ${BD}`,borderRadius:6,width:28,height:28,cursor:idx===0?"not-allowed":"pointer",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                          ↑
+                        </button>
+                        <button onClick={(e)=>{e.stopPropagation();handleChangePriority(task,"down");}} disabled={idx===groupedByDept[dept].length-1}
+                          style={{background:idx===groupedByDept[dept].length-1?"#E2E8F0":CARD,color:idx===groupedByDept[dept].length-1?T3:T1,border:`1px solid ${BD}`,borderRadius:6,width:28,height:28,cursor:idx===groupedByDept[dept].length-1?"not-allowed":"pointer",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                          ↓
+                        </button>
+                      </div>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            ))}
+          </div>
+        ):(
+          // Vista simple (usuarios no-Dirección)
+          <div>
+            {filteredTasks.length===0&&<div style={{fontSize:13,color:T3,fontStyle:"italic",textAlign:"center",padding:40}}>No hay tareas</div>}
+            {filteredTasks.sort((a,b)=>a.priority-b.priority).map((task,idx)=>(
+              <Card key={task.id} cls="dc" sx={{padding:16,marginBottom:8,borderLeft:`4px solid ${priorityColor(task.priority)}`}} onClick={()=>setSelectedTask(task)}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:14,fontWeight:600,color:T1,marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{task.title}</div>
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                      <Badge ch={priorityLabel(task.priority)} c={priorityColor(task.priority)} bg={priorityColor(task.priority)+"15"}/>
+                      <Badge ch={task.status} c={statusColor(task.status)} bg={statusColor(task.status)+"15"}/>
+                      {task.deadline&&<Badge ch={new Date(task.deadline).toLocaleDateString("es-MX",{day:"2-digit",month:"short"})} c={T3} bg={BG}/>}
+                      <span style={{fontSize:10,color:T3}}>Por: {task.createdBy?.name||"—"}</span>
+                    </div>
+                  </div>
+                  {canEdit(task)&&(
+                    <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                      <button onClick={(e)=>{e.stopPropagation();handleChangePriority(task,"up");}} disabled={idx===0}
+                        style={{background:idx===0?"#E2E8F0":CARD,color:idx===0?T3:T1,border:`1px solid ${BD}`,borderRadius:6,width:28,height:28,cursor:idx===0?"not-allowed":"pointer",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                        ↑
+                      </button>
+                      <button onClick={(e)=>{e.stopPropagation();handleChangePriority(task,"down");}} disabled={idx===filteredTasks.length-1}
+                        style={{background:idx===filteredTasks.length-1?"#E2E8F0":CARD,color:idx===filteredTasks.length-1?T3:T1,border:`1px solid ${BD}`,borderRadius:6,width:28,height:28,cursor:idx===filteredTasks.length-1?"not-allowed":"pointer",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                        ↓
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Componente auxiliar: formulario de crear/editar tarea rápida
+function QuickTaskForm({user,task,onSave,onCancel}){
+  const [title,setTitle]=useState(task?.title||"");
+  const [description,setDescription]=useState(task?.description||"");
+  const [priority,setPriority]=useState(task?.priority||2);
+  const [deadline,setDeadline]=useState(task?.deadline?task.deadline.split("T")[0]:"");
+  const [dept,setDept]=useState(task?.dept||user?.dept||"");
+  const [saving,setSaving]=useState(false);
+  const [error,setError]=useState(null);
+  const isMobile=useIsMobile();
+
+  const isDireccion=user?.dept==="Dirección";
+
+  const handleSave=()=>{
+    if(!title.trim()){
+      setError("El título es obligatorio");
+      return;
+    }
+    if(!dept){
+      setError("El departamento es obligatorio");
+      return;
+    }
+    setSaving(true);
+    const data={
+      title:title.trim(),
+      description:description.trim(),
+      priority,
+      deadline:deadline?new Date(deadline+"T00:00:00").toISOString():null,
+      dept
+    };
+    setTimeout(()=>{
+      onSave(data);
+      setSaving(false);
+    },100);
+  };
+
+  return(
+    <div style={{minHeight:"100vh",background:BG}}>
+      <NavBar
+        left={<button onClick={onCancel} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:T1}}>←</button>}
+        center={<span style={{fontSize:14,fontWeight:600,color:T1}}>{task?"Editar tarea":"Nueva tarea rápida"}</span>}
+        right={null}
+      />
+      <div style={{maxWidth:600,margin:"0 auto",padding:"20px 24px"}}>
+        <Card sx={{padding:20}}>
+          {error&&<div style={{padding:10,background:"#FEF2F2",border:"1px solid #FCA5A5",borderRadius:8,fontSize:12,color:"#DC2626",marginBottom:16}}>{error}</div>}
+
+          {/* Título */}
+          <div style={{marginBottom:16}}>
+            <label style={{fontSize:12,fontWeight:600,color:T2,marginBottom:6,display:"block"}}>Título *</label>
+            <input type="text" value={title} onChange={e=>setTitle(e.target.value)}
+              placeholder="Título de la tarea"
+              style={{width:"100%",padding:10,borderRadius:8,border:`1px solid ${BD}`,fontSize:13,background:CARD,color:T1}}/>
+          </div>
+
+          {/* Descripción */}
+          <div style={{marginBottom:16}}>
+            <label style={{fontSize:12,fontWeight:600,color:T2,marginBottom:6,display:"block"}}>Descripción</label>
+            <textarea value={description} onChange={e=>setDescription(e.target.value)}
+              placeholder="Descripción opcional"
+              style={{width:"100%",padding:10,borderRadius:8,border:`1px solid ${BD}`,fontSize:13,background:CARD,color:T1,minHeight:80,resize:"vertical"}}/>
+          </div>
+
+          {/* Prioridad */}
+          <div style={{marginBottom:16}}>
+            <label style={{fontSize:12,fontWeight:600,color:T2,marginBottom:6,display:"block"}}>Prioridad</label>
+            <div style={{display:"flex",gap:8}}>
+              {[1,2,3].map(p=>(
+                <button key={p} onClick={()=>setPriority(p)}
+                  style={{flex:1,background:priority===p?({1:"#DC2626",2:"#D97706",3:"#059669"}[p]):CARD,color:priority===p?"#fff":T2,border:`1px solid ${priority===p?({1:"#DC2626",2:"#D97706",3:"#059669"}[p]):BD}`,padding:"10px",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600}}>
+                  {{1:"Alta",2:"Media",3:"Baja"}[p]}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Departamento */}
+          {isDireccion&&(
+            <div style={{marginBottom:16}}>
+              <label style={{fontSize:12,fontWeight:600,color:T2,marginBottom:6,display:"block"}}>Departamento *</label>
+              <select value={dept} onChange={e=>setDept(e.target.value)}
+                style={{width:"100%",padding:10,borderRadius:8,border:`1px solid ${BD}`,fontSize:13,background:CARD,color:T1}}>
+                <option value="">Selecciona...</option>
+                {DEPTS.map(d=><option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+          )}
+
+          {/* Fecha límite */}
+          <div style={{marginBottom:16}}>
+            <label style={{fontSize:12,fontWeight:600,color:T2,marginBottom:6,display:"block"}}>Fecha límite (opcional)</label>
+            <input type="date" value={deadline} onChange={e=>setDeadline(e.target.value)}
+              style={{width:"100%",padding:10,borderRadius:8,border:`1px solid ${BD}`,fontSize:13,background:CARD,color:T1}}/>
+          </div>
+
+          {/* Botones */}
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={onCancel} disabled={saving}
+              style={{flex:1,background:CARD,color:T2,border:`1px solid ${BD}`,padding:"10px",borderRadius:8,cursor:saving?"not-allowed":"pointer",fontSize:13,fontWeight:600}}>
+              Cancelar
+            </button>
+            <button onClick={handleSave} disabled={saving}
+              style={{flex:1,background:saving?"#94A3B8":PR,color:"#fff",border:"none",padding:"10px",borderRadius:8,cursor:saving?"not-allowed":"pointer",fontSize:13,fontWeight:600}}>
+              {saving?"Guardando...":"Guardar"}
+            </button>
+          </div>
+        </Card>
       </div>
     </div>
   );
@@ -4154,6 +4658,7 @@ export default function App(){
   const [dbReady,       setDbReady]      = useState(false);
   const [dbConnected,   setDbConnected]  = useState(null);
   const [avisos,        setAvisos]       = useState([]);
+  const [quickTasks,    setQuickTasks]   = useState([]);
   const [ausencias,     setAusencias]    = useState([]);
   const [deletedTasks,  setDeletedTasks] = useState([]);
   const [saveError,     setSaveError]    = useState(null);
@@ -4189,6 +4694,31 @@ export default function App(){
       })
       .on("postgres_changes",{event:"UPDATE",schema:"public",table:"avisos"},({new:row})=>{
         setAvisos(p=>p.map(a=>a.id===row.id?row.data:a));
+      })
+      .subscribe();
+    return ()=>supabase.removeChannel(ch);
+  },[]);
+
+  // Supabase quick_tasks: carga + realtime
+  useEffect(()=>{
+    supabase.from("quick_tasks").select("*")
+      .then(({data,error})=>{
+        if(error){console.error("[Supabase] Error SELECT quick_tasks:",error.message);return;}
+        console.log(`[Supabase] Quick tasks SELECT ok — ${data.length} tareas`);
+        setQuickTasks([...data].sort((a,b)=>new Date(b.data?.createdAt||0)-new Date(a.data?.createdAt||0)).map(r=>r.data));
+      });
+    const ch=supabase.channel("quick-tasks-realtime")
+      .on("postgres_changes",{event:"INSERT",schema:"public",table:"quick_tasks"},({new:row})=>{
+        console.log("[Supabase] Realtime INSERT quick_task:", row.id);
+        setQuickTasks(p=>p.some(t=>t.id===row.id)?p:[row.data,...p]);
+      })
+      .on("postgres_changes",{event:"UPDATE",schema:"public",table:"quick_tasks"},({new:row})=>{
+        console.log("[Supabase] Realtime UPDATE quick_task:", row.id);
+        setQuickTasks(p=>p.map(t=>t.id===row.id?row.data:t));
+      })
+      .on("postgres_changes",{event:"DELETE",schema:"public",table:"quick_tasks"},({old:row})=>{
+        console.log("[Supabase] Realtime DELETE quick_task:", row.id);
+        setQuickTasks(p=>p.filter(t=>t.id!==row.id));
       })
       .subscribe();
     return ()=>supabase.removeChannel(ch);
@@ -4768,6 +5298,69 @@ export default function App(){
   };
   const unreadAvisos=user?avisos.filter(a=>avisoIncludesUser(a,user.id)&&!(a.leidoPor||[]).includes(user.id)).length:0;
 
+  // ════════════════════════════════════════
+  // OPERACIONES CRUD: QUICK TASKS
+  // ════════════════════════════════════════
+  const createQuickTask=async data=>{
+    const now=new Date();
+    const nextPriority=quickTasks.filter(t=>t.dept===data.dept&&!t.deleted).length+1;
+    const qt={
+      id:`QT-${now.getTime()}`,
+      title:data.title,
+      description:data.description||"",
+      dept:data.dept,
+      createdBy:{id:user.id,name:user.name,dept:user.dept},
+      status:"Pendiente",
+      priority:nextPriority,
+      deadline:data.deadline||null,
+      comments:[],
+      createdAt:now.toISOString(),
+      completedAt:null,
+      deletedAt:null,
+      deletedBy:null,
+      deleteReason:null,
+      deleted:false
+    };
+    setQuickTasks(p=>[qt,...p]);
+    const {error}=await supabase.from("quick_tasks").insert({id:qt.id,data:qt});
+    if(error){
+      console.error("[Supabase] Error INSERT quick_task:",error.message,error);
+      setQuickTasks(p=>p.filter(t=>t.id!==qt.id));
+    }else{
+      console.log("[Supabase] INSERT quick_task ok:",qt.id);
+    }
+  };
+
+  const updateQuickTask=(id,patch)=>{
+    setQuickTasks(prev=>prev.map(t=>t.id===id?{...t,...patch}:t));
+    supabase.rpc("merge_quick_task_data",{task_id:id,patch})
+      .then(({error})=>{
+        if(error){
+          console.error("[Supabase] Error updateQuickTask:",error.message);
+          setQuickTasks(prev=>prev.map(t=>t.id===id?quickTasks.find(x=>x.id===id)||t:t));
+        }
+      });
+  };
+
+  const deleteQuickTask=(id,deleteData)=>{
+    updateQuickTask(id,deleteData);
+  };
+
+  const restoreQuickTask=(id,restoreData)=>{
+    updateQuickTask(id,restoreData);
+  };
+
+  const activeQuickTasksCount=useMemo(()=>{
+    if(!user) return 0;
+    const isDireccion=user.dept==="Dirección";
+    return quickTasks.filter(t=>{
+      if(t.deleted) return false;
+      if(t.status==="Completada") return false;
+      if(!isDireccion&&t.dept!==user.dept) return false;
+      return true;
+    }).length;
+  },[quickTasks,user]);
+
   const logout=()=>{localStorage.removeItem("taskops_user");sessionStorage.removeItem("taskops_authed_depts");setUser(null);setAuthedDepts([]);setScreen("dash");};
   const openNotif=()=>{const now=new Date().toISOString();localStorage.setItem("taskops_last_notif_view",now);setLastNotifView(now);setScreen("notif");};
   const unreadNotif=useMemo(()=>{
@@ -4867,6 +5460,8 @@ export default function App(){
 
   if(screen==="ausencias") return <><style>{CSS}</style><ScreenAusencias user={user} ausencias={ausencias} onBack={()=>setScreen("dash")} cargarAusencias={cargarAusencias}/></>;
 
+  if(screen==="quickTasks"&&user) return <><style>{CSS}</style><ScreenQuickTasks user={user} quickTasks={quickTasks} onBack={()=>setScreen("dash")} onCreateTask={createQuickTask} onUpdateTask={updateQuickTask} onDeleteTask={deleteQuickTask} onRestoreTask={restoreQuickTask}/></>;
+
   return(
     <>
       <style>{CSS}</style>
@@ -4889,6 +5484,8 @@ export default function App(){
         dbConnected={dbConnected}
         onAvisos={()=>setScreen("avisos")}
         onAusencias={()=>setScreen("ausencias")}
+        onQuickTasks={()=>setScreen("quickTasks")}
+        quickTasksCount={activeQuickTasksCount}
         ausencias={ausencias}
         cargarAusencias={cargarAusencias}
         unreadAvisos={unreadAvisos}
