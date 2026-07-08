@@ -1,6 +1,13 @@
 import { useState, useMemo, useRef, useEffect, useCallback, Fragment } from "react";
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
-import supabase from "./supabase";
+import supabase, { SUPABASE_URL, SUPABASE_ANON_KEY } from "./supabase";
+import {
+  MAX_ATTACHMENT_SIZE, VAPID_PUBLIC_KEY, DEPT_COLORS, USERS,
+  DEPTS, USERS_BY_DEPT, ASSIGN_MATRIX, PUEDE_REGISTRAR_AUSENCIAS,
+  TIPO_AUSENCIA_CONFIG, TIPO_AUSENCIA_ABBR, DIAS_SEMANA_OPTS,
+  TT, SC, PC, FS_CFG, BLANK, MONTHS_ES, DAYS_ES, DAYS_WORK, IT, LOGO_URL,
+  BG, CARD, BD, T1, T2, T3, PR, PRl, SH, SHm, fnt, inp, CSS
+} from "./lib/constants";
 
 function safeDate(dateStr) {
   if(!dateStr) return null;
@@ -22,12 +29,9 @@ function fmtDT(iso) {
   return d.toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"})+" "+d.toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"});
 }
 
-const MAX_ATTACHMENT_SIZE = 20*1024*1024;
-
 /* ════════════════════════════════════════
    PUSH NOTIFICATIONS
 ════════════════════════════════════════ */
-const VAPID_PUBLIC_KEY = "BDPhk-gLXmglq2HQL7tVFaXUpMTA4Lb6CFVVHN8FRfsmR3SjR52PZP_iQ6usGPNA1nhgc-P0XjBfbVLvFscQI3g";
 
 function urlBase64ToUint8Array(base64String) {
   const padding = "=".repeat((4 - base64String.length % 4) % 4);
@@ -93,6 +97,32 @@ async function registerPush(user) {
   }
 }
 
+async function downloadAttachmentIOS(att) {
+  try {
+    const { data, error } = await supabase.storage.from("task-attachments").createSignedUrl(att.url, 60);
+    if (error) {
+      alert("No se pudo generar el enlace de descarga: " + error.message);
+      return;
+    }
+    // Fetch del blob para compatibilidad con iOS Safari
+    const response = await fetch(data.signedUrl);
+    if (!response.ok) throw new Error("Error al descargar el archivo");
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = objectUrl;
+    a.download = att.nombre || "archivo";
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(objectUrl);
+  } catch (err) {
+    console.error("[Download] Error descargando adjunto:", err);
+    alert("Error al descargar el archivo: " + err.message);
+  }
+}
+
 async function sendPushNotification(userIds, title, body, url="/") {
   if (!userIds || !userIds.length) return;
   try {
@@ -148,52 +178,43 @@ async function sendSMSNotification(type, toPhones, data) {
 /* ════════════════════════════════════════
    DATA & CONSTANTS
 ════════════════════════════════════════ */
-const DEPT_COLORS = {
-  "Dirección":"#4338CA","Ingenieria":"#2563EB","Calidad":"#059669",
-  "Producción":"#D97706","Compras":"#7C3AED","Logistica/IT":"#0891B2",
-  "Finanzas":"#BE185D","Mantenimiento":"#B45309","SMT":"#0F766E","RR.HH":"#DC2626",
-  "Investigación y Desarrollo":"#0D9488","Recepción":"#0369A1",
-};
-const DEPT_PWD = {
-  "Dirección":"Dir#FPM24","Ingenieria":"Lab#Ing24","Calidad":"Cal#QC24","Producción":"Prod#FPM24",
-  "Compras":"Comp#FPM24","Logistica/IT":"Log#FPM24","Finanzas":"Fin#FPM24",
-  "Mantenimiento":"Mant#FPM24","SMT":"SMT#FPM24","RR.HH":"RRHH#FPM24",
-  "Investigación y Desarrollo":"Lab#FPM24","Recepción":"Rec#FPM24",
-};
-const USERS = [
-  {id:1,  name:"Dir. General",               email:"agbaxter@fpm.com.mx",        ini:"DG",  dept:"Dirección",                    phone:"528112559943"},
-  {id:2,  name:"Gerente de Ingeniería",      email:"ingenieria@fpm.com.mx",      ini:"GI",  dept:"Ingenieria",                   phone:"528111060963"},
-  {id:3,  name:"Gerente de Calidad",         email:"calidad@fpm.com.mx",         ini:"GC",  dept:"Calidad",                      phone:"528118794086"},
-  {id:4,  name:"Gerente de Producción",      email:"administracion@fpm.com.mx",  ini:"GP",  dept:"Producción",                   phone:"528134752622"},
-  {id:5,  name:"Gerente de Compras",         email:"compras@fpm.com.mx",         ini:"GCo", dept:"Compras",                      phone:"528117636745"},
-  {id:6,  name:"Gerente de Logística",       email:"logistica@fpm.com.mx",       ini:"GL",  dept:"Logistica/IT",                 phone:"528117641913"},
-  {id:7,  name:"Gerente de Finanzas",        email:"cmartinez@fpm.com.mx",       ini:"GF",  dept:"Finanzas",                     phone:"528110665239"},
-  {id:8,  name:"Mantenimiento",              email:"mpacheco@fpm.com.mx",        ini:"MT",  dept:"Mantenimiento",                phone:"528126577368"},
-  {id:9,  name:"SMT",                        email:"smt@fpm.com.mx",             ini:"SM",  dept:"SMT",                          phone:"528211248010"},
-  {id:10, name:"Gerente de RR.HH",           email:"recursoshumanos@fpm.com.mx", ini:"RH",  dept:"RR.HH",                        phone:"528110665017"},
-  {id:11, name:"Supervisor de Calidad",      email:"icc@fpm.com.mx",             ini:"SC",  dept:"Calidad",                      phone:"528115270228"},
-  {id:12, name:"Inspector de Calidad",       email:"auxcalidad@fpm.com.mx",      ini:"IC",  dept:"Calidad",                      phone:"528110643416"},
-  {id:13, name:"Supervisor V",               email:"produccion@fpm.com.mx",      ini:"SV",  dept:"Producción",                   phone:"528128709178"},
-  {id:14, name:"Supervisor N",               email:"produccion@fpm.com.mx",      ini:"SN",  dept:"Producción",                   phone:"528130766964"},
-  {id:15, name:"Supervisor E",               email:"produccion@fpm.com.mx",      ini:"SE",  dept:"Producción",                   phone:"528125977586"},
-  {id:16, name:"Almacén",                    email:"almacen@fpm.com.mx",         ini:"AL",  dept:"Logistica/IT",                 phone:"528112197661"},
-  {id:17, name:"Cobranza",                   email:"cobranzas@fpm.com.mx",       ini:"CB",  dept:"Finanzas",                     phone:"528120747829"},
-  {id:18, name:"Investigación y Desarrollo", email:"laboratorio@fpm.com.mx",     ini:"JL",  dept:"Investigación y Desarrollo",   phone:"528110665019"},
-  {id:19, name:"Recepción",                  email:"recepcion@fpm.com.mx",       ini:"RC",  dept:"Recepción",                    phone:"528126586174"},
-];
-USERS.forEach(u => { u.uc = DEPT_COLORS[u.dept]; });
-const DEPTS = [...new Set(USERS.map(u => u.dept))];
-const USERS_BY_DEPT = DEPTS.map(dept=>({dept,users:USERS.filter(u=>u.dept===dept)}));
+// (Constantes movidas a src/lib/constants.js)
 
-// ids que cada departamento puede seleccionar como responsable
-const ASSIGN_MATRIX = {
-  "Dirección":  null,        // null = todos
-  "Ingenieria": [9],         // SMT
-  "Calidad":    [8, 11, 12], // Mantenimiento, Auxiliar calidad, Inspector calidad
-  "Producción":  [13, 14, 15],// Supervisores V, N, E
-  "Logistica/IT":[16],        // Almacén
-  "Finanzas":    [17],        // Cobranza
-};
+// Función para validar contraseña server-side
+async function verifyDeptPassword(dept, password) {
+  try {
+    const response = await fetch(
+      `${SUPABASE_URL}/functions/v1/verify-dept-password`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${SUPABASE_ANON_KEY}`
+        },
+        body: JSON.stringify({ dept, password })
+      }
+    );
+
+    // Manejar rate limiting
+    if (response.status === 429) {
+      const data = await response.json();
+      alert(`Demasiados intentos. Espera ${data.retryAfter || 60} segundos.`);
+      return false;
+    }
+
+    if (!response.ok) {
+      console.error("[Auth] Error en verificación:", response.status);
+      return false;
+    }
+
+    const data = await response.json();
+    return data.valid === true;
+  } catch (err) {
+    console.error("[Auth] Error verificando contraseña:", err);
+    return false;
+  }
+}
+
 const getAssignableIds = user => {
   if (!user) return [];
   if (user.dept === "Dirección") return USERS.map(u => u.id);
@@ -208,21 +229,11 @@ const getAssignableIds = user => {
 // departamento), así que el permiso para registrar ausencias se mapea por
 // id: son los mismos usuarios que ya actúan como "jefe de depto" en el
 // resto del sistema — Dirección, cada "Gerente de X" y RR.HH.
-const PUEDE_REGISTRAR_AUSENCIAS = [1,2,3,4,5,6,7,10];
 const puedeRegistrarAusencias = user => !!user && PUEDE_REGISTRAR_AUSENCIAS.includes(user.id);
 const esRHAusencias = user => user?.dept === "RR.HH";
 // La columna registrado_por_rol solo acepta 'rh' o 'gerente'; Dirección
 // registra "como gerente" para efectos de esa columna.
 const rolRegistroAusencia = user => esRHAusencias(user) ? "rh" : "gerente";
-
-const TIPO_AUSENCIA_CONFIG = {
-  vacaciones:       {label:"Vacaciones",       bg:"#E1F5EE", text:"#0F6E56"},
-  permiso:          {label:"Permiso",          bg:"#E6F1FB", text:"#185FA5"},
-  dia_asignado:     {label:"Día asignado",     bg:"#FAEEDA", text:"#854F0B"},
-  esquema_reducido: {label:"Esquema reducido", bg:"#EEEDFE", text:"#3C3489"},
-};
-const TIPO_AUSENCIA_ABBR = {vacaciones:"Vac",permiso:"Perm",dia_asignado:"Día",esquema_reducido:"E.Red"};
-const DIAS_SEMANA_OPTS = [{n:1,l:"L"},{n:2,l:"M"},{n:3,l:"X"},{n:4,l:"J"},{n:5,l:"V"}];
 
 // Formatea una fecha local como YYYY-MM-DD sin pasar por toISOString():
 // toISOString() convierte a UTC y puede mostrar el día equivocado para
@@ -257,140 +268,10 @@ const fmtRangoAusencia = (desde,hasta) => {
   return `${fmtFechaCortaAusencia(desde)} – ${fmtFechaCortaAusencia(hasta)}`;
 };
 
-const TT = {
-  "Operativa":     {c:"#2563EB", bg:"#EFF6FF"},
-  "Administrativa":{c:"#7C3AED", bg:"#F5F3FF"},
-  "Proyecto":      {c:"#059669", bg:"#ECFDF5"},
-};
-const SC = {
-  "Pendiente":  {c:"#6B7280", bg:"#F9FAFB"},
-  "En proceso": {c:"#D97706", bg:"#FFFBEB"},
-  "Bloqueada":  {c:"#DC2626", bg:"#FEF2F2"},
-  "Completada": {c:"#059669", bg:"#ECFDF5"},
-  "Cancelada":  {c:"#9CA3AF", bg:"#F9FAFB"},
-};
-const PC = {Alta:{c:"#DC2626",bg:"#FEF2F2"},Media:{c:"#D97706",bg:"#FFFBEB"},Baja:{c:"#059669",bg:"#ECFDF5"}};
-const FS_CFG = {
-  "Pendiente": {c:"#6B7280",bg:"#F1F5F9",icon:"○"},
-  "En proceso":{c:"#D97706",bg:"#FFFBEB",icon:"◑"},
-  "Completado":{c:"#059669",bg:"#ECFDF5",icon:"●"},
-};
-const BLANK = {type:"",title:"",description:"",respId:"",invIds:[],deadline:"",priority:"Media",origin:"Sistema",notes:"",notifyOnComplete:[]};
-const MONTHS_ES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
-const DAYS_ES   = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
-
-const IT = [
-  {
-    id:"TSK-001",type:"Operativa",priority:"Alta",origin:"Verbal",status:"En proceso",
-    title:"Defectos de soldadura en horno de reflujo — línea SMT 3",
-    description:"Se detectaron puentes de soldadura y soldadura fría en componentes QFP-64 procesados en línea SMT 3. Se requiere ajuste del perfil térmico del horno de reflujo, revisión del esténcil y evaluación del lote afectado bajo criterio IPC-A-610 clase 2.",
-    creator:USERS[3], responsible:USERS[12],
-    invIds:[9,8,12,13],
-    flowStates:{9:"En proceso",8:"Pendiente",12:"Pendiente",13:"Pendiente"},
-    deadline:"2026-05-29", createdAt:"2026-05-24", flowLog:[],
-    comments:[
-      {user:USERS[12],text:"Se inició diagnóstico del perfil térmico. Temperatura pico fuera de rango en zona 5 del horno.",time:"24 may 2026 08:30"},
-      {user:USERS[7], text:"Revisando termopar zona 5. Se detectó deriva de ±12 °C respecto al setpoint. Pieza de repuesto en solicitud a almacén.",time:"24 may 2026 10:15"},
-    ],
-    confirmed:[],
-  },
-  {
-    id:"TSK-002",type:"Operativa",priority:"Alta",origin:"Sistema",status:"En proceso",
-    title:"Inspección IPC-A-610 lote PCB-2026-044 — 320 piezas exportación",
-    description:"Inspección visual y eléctrica del lote PCB-2026-044 bajo norma IPC-A-610 clase 2. El lote consta de 320 tarjetas destinadas a cliente de exportación. Se requiere reporte de hallazgos, segregación de rechazos y disposición formal antes del embarque del 30 de mayo.",
-    creator:USERS[2], responsible:USERS[11],
-    invIds:[12,11,4],
-    flowStates:{12:"En proceso",11:"Pendiente",4:"Pendiente"},
-    deadline:"2026-05-30", createdAt:"2026-05-22", flowLog:[],
-    comments:[
-      {user:USERS[11],text:"Inicio de inspección visual. Se detectaron 4 piezas con soldadura fría en zona J3. Segregadas para retrabajo. Continúa revisión eléctrica.",time:"22 may 2026 14:00"},
-    ],
-    confirmed:[],
-  },
-  {
-    id:"TSK-003",type:"Operativa",priority:"Alta",origin:"Sistema",status:"En proceso",
-    title:"Desabasto de flux WS-820 — gestión de compra de emergencia",
-    description:"Stock de flux WS-820 en punto crítico: consumo diario de 3 litros, inventario actual para 1.5 días de producción. Coordinar compra de emergencia con proveedor Kester, recepción en almacén y continuidad de línea. Evitar paro no programado.",
-    creator:USERS[3], responsible:USERS[5],
-    invIds:[6,16,5],
-    flowStates:{6:"En proceso",16:"Pendiente",5:"Pendiente"},
-    deadline:"2026-05-27", createdAt:"2026-05-25", flowLog:[],
-    comments:[
-      {user:USERS[5], text:"Contacto con Kester confirmado. Entrega express disponible en 24 h con costo adicional de $1,200 MXN. Se solicita autorización a Dirección.",time:"25 may 2026 11:20"},
-    ],
-    confirmed:[],
-  },
-  {
-    id:"TSK-004",type:"Proyecto",priority:"Media",origin:"Junta",status:"En proceso",
-    title:"Implementación metodología 5S en área de ensamble manual",
-    description:"Implementar las 5 etapas de la metodología 5S (Clasificar, Ordenar, Limpiar, Estandarizar, Sostener) en el área de ensamble manual para reducir tiempos de búsqueda de herramientas, mejorar ergonomía de estaciones y reducir defectos atribuibles al entorno. Incluye capacitación a operadores y auditoría de cierre.",
-    creator:USERS[0], responsible:USERS[3],
-    invIds:[4,13,14,15,3],
-    flowStates:{4:"En proceso",13:"En proceso",14:"Pendiente",15:"Pendiente",3:"Pendiente"},
-    deadline:"2026-06-13", createdAt:"2026-05-19", flowLog:[],
-    comments:[
-      {user:USERS[3], text:"Kick-off con supervisores realizado. Asignación de zonas: Sup1 → área A (inserción), Sup2 → área B (pruebas), Sup3 → área C (empaque).",time:"20 may 2026 09:00"},
-      {user:USERS[12],text:"Área A clasificada. Se retiraron 23 herramientas obsoletas y 2 equipos sin uso. Inicio de etiquetado esta semana.",time:"22 may 2026 16:45"},
-    ],
-    confirmed:[],
-  },
-  {
-    id:"TSK-005",type:"Administrativa",priority:"Media",origin:"Sistema",status:"Pendiente",
-    title:"Conciliación de inventario SMD críticos vs ERP — cierre mayo",
-    description:"Conciliación de inventario físico versus sistema ERP para componentes SMD críticos: resistencias 0402 (1k, 10k, 100k), capacitores 0603 (100nF, 10µF) y CIs de la familia STM32F4. Detectar discrepancias, identificar causas raíz y ajustar registros antes del cierre contable del 31 de mayo.",
-    creator:USERS[4], responsible:USERS[10],
-    invIds:[11,16,9,5],
-    flowStates:{11:"Pendiente",16:"Pendiente",9:"Pendiente",5:"Pendiente"},
-    deadline:"2026-05-31", createdAt:"2026-05-26", flowLog:[],
-    comments:[],
-    confirmed:[],
-  },
-];
-
-const LOGO_URL = "/fpm-logo.jpg";
-
 /* ════════════════════════════════════════
    DESIGN TOKENS & CSS
 ════════════════════════════════════════ */
-const BG="#F0F4FF",CARD="#FFFFFF",BD="#DDE3F0",T1="#1E1B4B",T2="#64748B",T3="#94A3B8",PR="#4338CA",PRl="#EEF2FF";
-const SH="0 1px 3px rgba(15,23,42,.08),0 1px 2px rgba(15,23,42,.04)";
-const SHm="0 8px 28px rgba(15,23,42,.14)";
-const fnt={fontFamily:"'Plus Jakarta Sans',system-ui,sans-serif"};
-const inp={background:CARD,border:`1px solid ${BD}`,color:T1,padding:"10px 14px",fontSize:13,outline:"none",borderRadius:8,...fnt,width:"100%"};
-
-const CSS=`
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
-*{box-sizing:border-box;margin:0;padding:0;}
-body,#root{min-height:100vh;background:${BG};font-family:'Plus Jakarta Sans',system-ui,sans-serif;}
-::-webkit-scrollbar{width:5px;} ::-webkit-scrollbar-thumb{background:#C7D2E8;border-radius:10px;}
-.rw:hover{background:#F8FAFF!important;} .rw{transition:background .12s;cursor:pointer;}
-.ub:hover{background:${PR}!important;color:#fff!important;border-color:${PR}!important;} .ub{transition:all .15s;}
-.hl:hover{color:${PR}!important;} .hl{transition:color .1s;}
-.dc:hover{box-shadow:0 6px 24px rgba(67,56,202,.18)!important;transform:translateY(-2px);} .dc{transition:all .18s ease;cursor:pointer;}
-.dp-item:hover{background:${PRl}!important;cursor:pointer;} .dp-item{transition:background .1s;}
-.im:hover{border-color:${PR}!important;} .im{transition:border-color .12s;}
-.im.on{border-color:${PR}!important;background:${PRl}!important;}
-.fab:hover{transform:scale(1.1);box-shadow:0 8px 28px rgba(67,56,202,.45)!important;} .fab{transition:all .15s ease;}
-.pl{animation:pl 1.4s ease-in-out infinite;} @keyframes pl{0%,100%{opacity:1}50%{opacity:.25}}
-.fn-pulse{animation:fnp 1.9s ease-in-out infinite;} @keyframes fnp{0%,100%{box-shadow:0 0 0 0 rgba(67,56,202,0);border-color:#4338CA44}50%{box-shadow:0 0 0 5px rgba(67,56,202,.22);border-color:#4338CA}}
-.sp{animation:sp .9s linear infinite;display:inline-block;} @keyframes sp{to{transform:rotate(360deg)}}
-.nb{border:1px solid ${BD};color:${T2};background:none;padding:6px 12px;border-radius:8px;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:5px;font-family:inherit;transition:all .12s;}
-.nb:hover{background:${PRl}!important;color:${PR}!important;border-color:${PR}!important;}
-.nb.active{background:${PRl};color:${PR};border-color:${PR};}
-.cal-day:hover{background:${PRl}!important;cursor:pointer;} .cal-day{transition:background .1s;}
-select{appearance:none;-webkit-appearance:none;} select option{background:#fff;color:${T1};}
-input[type=date]{color-scheme:light;}
-input::placeholder,textarea::placeholder{color:${T3};}
-textarea{resize:vertical;}
-.dz{border:2px dashed ${BD};transition:all .2s;border-radius:8px;}
-.dz:hover,.dz.ov{border-color:${PR}!important;background:${PRl}!important;}
-button{font-family:'Plus Jakarta Sans',system-ui,sans-serif;}
-.snav{overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
-.snav::-webkit-scrollbar{display:none;}
-@media(max-width:767px){
-  .nb{white-space:nowrap;}
-}
-`;
+// Design tokens importados desde src/lib/constants.js
 
 /* ════════════════════════════════════════
    UTILITIES
@@ -564,9 +445,7 @@ function FlowDiagram({invIds,flowStates,flowStageIds,onReorder,onStateChange,can
     onAttachmentsChange([...(attachments||[]),newAtt]);
   };
   const handleDownload=async att=>{
-    const{data,error}=await supabase.storage.from("task-attachments").createSignedUrl(att.url,60);
-    if(error){alert("No se pudo generar el enlace de descarga: "+error.message);return;}
-    window.open(data.signedUrl,"_blank");
+    await downloadAttachmentIOS(att);
   };
   const handleDeleteAttachment=async att=>{
     await supabase.storage.from("task-attachments").remove([att.url]);
@@ -751,14 +630,20 @@ function AlertBanner({tasks,onClickOverdue,onClickToday}){
 // vive en App() y empuja un nuevo array cada vez que la tabla cambia).
 function AusentesHoyWidget({ausencias,onVerMas,onOpenDetalle}){
   const [hoyList,setHoyList]=useState([]);
-  useEffect(()=>{
+
+  // Recargar ausentes hoy - siempre con fecha fresca
+  const cargarHoy=useCallback(()=>{
     const hoy=fmtISODateLocal(new Date());
     supabase.rpc("get_ausencias_en_rango",{fecha_desde:hoy,fecha_hasta:hoy})
       .then(({data,error})=>{
         if(error){console.error("[Supabase] Error get_ausencias_en_rango (hoy):",error.message);return;}
-        setHoyList(data||[]);
+        setHoyList(data||[]); // Reemplazar completo
       });
-  },[ausencias]);
+  },[]);
+
+  useEffect(()=>{
+    cargarHoy();
+  },[cargarHoy,ausencias]); // Recargar cuando ausencias cambie (realtime)
   const visibles=hoyList.slice(0,4);
   return(
     <Card sx={{padding:16,marginBottom:20}}>
@@ -791,8 +676,26 @@ function AusentesHoyWidget({ausencias,onVerMas,onOpenDetalle}){
    MODALS
 ════════════════════════════════════════ */
 function PasswordModal({dept,onSuccess,onViewOnly,onCancel,hideViewOnly}){
-  const [pwd,setPwd]=useState(""); const [err,setErr]=useState(false);
-  const check=()=>{if(!DEPT_PWD[dept]||DEPT_PWD[dept]===pwd)onSuccess();else{setErr(true);setPwd("");}};
+  const [pwd,setPwd]=useState("");
+  const [err,setErr]=useState(false);
+  const [loading,setLoading]=useState(false);
+
+  const check = async () => {
+    if (loading) return;
+    setLoading(true);
+
+    const isValid = await verifyDeptPassword(dept, pwd);
+
+    setLoading(false);
+
+    if (isValid) {
+      onSuccess();
+    } else {
+      setErr(true);
+      setPwd("");
+    }
+  };
+
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,.6)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
       <div style={{background:CARD,borderRadius:16,padding:28,width:"100%",maxWidth:360,boxShadow:SHm}}>
@@ -800,12 +703,12 @@ function PasswordModal({dept,onSuccess,onViewOnly,onCancel,hideViewOnly}){
           <div style={{width:36,height:36,borderRadius:10,background:DEPT_COLORS[dept]||PR,display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{color:"#fff",fontSize:16}}>🔒</span></div>
           <div><div style={{fontSize:15,fontWeight:700,color:T1}}>Acceso a {dept}</div><div style={{fontSize:12,color:T2}}>{hideViewOnly?"Se requiere autenticación para continuar":"Contraseña para agregar tareas"}</div></div>
         </div>
-        <input type="password" value={pwd} onChange={e=>{setPwd(e.target.value);setErr(false);}} onKeyDown={e=>e.key==="Enter"&&check()} placeholder="Contraseña..." style={{...inp,marginBottom:8,borderColor:err?"#DC2626":BD}}/>
+        <input type="password" value={pwd} onChange={e=>{setPwd(e.target.value);setErr(false);}} onKeyDown={async (e)=>{if(e.key==="Enter"&&!loading)await check()}} placeholder="Contraseña..." style={{...inp,marginBottom:8,borderColor:err?"#DC2626":BD}} disabled={loading}/>
         {err&&<div style={{fontSize:12,color:"#DC2626",marginBottom:10}}>Contraseña incorrecta.</div>}
-        <button onClick={check} style={{width:"100%",background:PR,color:"#fff",border:"none",padding:"11px",borderRadius:8,fontSize:13,fontWeight:700,cursor:"pointer",marginBottom:8}}>Acceder con contraseña</button>
+        <button onClick={check} disabled={!pwd.trim()||loading} style={{width:"100%",background:PR,color:"#fff",border:"none",padding:"11px",borderRadius:8,fontSize:13,fontWeight:700,cursor:loading||!pwd.trim()?"not-allowed":"pointer",marginBottom:8,opacity:loading||!pwd.trim()?0.6:1}}>{loading?"Verificando...":"Acceder con contraseña"}</button>
         <div style={{display:"flex",gap:8}}>
-          {!hideViewOnly&&<button onClick={onViewOnly} style={{flex:1,background:BG,border:`1px solid ${BD}`,color:T2,padding:"9px",borderRadius:8,fontSize:12,cursor:"pointer",fontWeight:500}}>Solo ver</button>}
-          <button onClick={onCancel} style={{flex:hideViewOnly?undefined:1,background:BG,border:`1px solid ${BD}`,color:T2,padding:"9px",borderRadius:8,fontSize:12,cursor:"pointer",fontWeight:500,width:hideViewOnly?"100%":undefined}}>Cancelar</button>
+          {!hideViewOnly&&<button onClick={onViewOnly} style={{flex:1,background:BG,border:`1px solid ${BD}`,color:T2,padding:"9px",borderRadius:8,fontSize:12,cursor:"pointer",fontWeight:500}} disabled={loading}>Solo ver</button>}
+          <button onClick={onCancel} style={{flex:hideViewOnly?undefined:1,background:BG,border:`1px solid ${BD}`,color:T2,padding:"9px",borderRadius:8,fontSize:12,cursor:"pointer",fontWeight:500,width:hideViewOnly?"100%":undefined}} disabled={loading}>Cancelar</button>
         </div>
         {!hideViewOnly&&<div style={{marginTop:12,fontSize:11,color:T3,textAlign:"center"}}>Sin contraseña podrás ver tareas pero no agregar ni editar.</div>}
       </div>
@@ -904,14 +807,13 @@ function ModalDetalleAusencia({ausencia,onClose,onEditar,onEliminar,user}){
             </div>
           </div>
 
-          {/* Horas (si aplica) */}
+          {/* Horario (si aplica) */}
           {(ausencia.hora_entrada||ausencia.hora_salida)&&(
             <div style={{marginBottom:16}}>
               <div style={{fontSize:10,fontWeight:600,color:T3,marginBottom:6,letterSpacing:.5}}>HORARIO</div>
               <div style={{fontSize:13,color:T1}}>
-                {ausencia.hora_entrada&&<span>Entrada: {ausencia.hora_entrada.slice(0,5)}</span>}
-                {ausencia.hora_entrada&&ausencia.hora_salida&&<span style={{margin:"0 8px"}}>·</span>}
-                {ausencia.hora_salida&&<span>Salida: {ausencia.hora_salida.slice(0,5)}</span>}
+                {ausencia.hora_entrada&&<div>Entrada: {typeof ausencia.hora_entrada==='string'?ausencia.hora_entrada.slice(0,5):ausencia.hora_entrada}</div>}
+                {ausencia.hora_salida&&<div>Salida: {typeof ausencia.hora_salida==='string'?ausencia.hora_salida.slice(0,5):ausencia.hora_salida}</div>}
               </div>
             </div>
           )}
@@ -923,6 +825,19 @@ function ModalDetalleAusencia({ausencia,onClose,onEditar,onEliminar,user}){
               <div style={{fontSize:13,color:T1}}>
                 {ausencia.tipo_permiso==="entrada_tarde"?"Entrada tarde":"Salida temprana"}
                 {ausencia.hora_permiso&&<span> a las {ausencia.hora_permiso.slice(0,5)}</span>}
+              </div>
+            </div>
+          )}
+
+          {/* Días de la semana (si aplica) */}
+          {ausencia.dias_semana&&ausencia.dias_semana.length>0&&(
+            <div style={{marginBottom:16}}>
+              <div style={{fontSize:10,fontWeight:600,color:T3,marginBottom:6,letterSpacing:.5}}>DÍAS QUE APLICA</div>
+              <div style={{fontSize:13,color:T1}}>
+                {ausencia.dias_semana.map(n=>{
+                  const nombres={1:"Lunes",2:"Martes",3:"Miércoles",4:"Jueves",5:"Viernes"};
+                  return nombres[n]||"";
+                }).filter(Boolean).join(", ")}
               </div>
             </div>
           )}
@@ -968,12 +883,22 @@ function ScreenLogin({onLogin,onBack}){
   const [selUser,setSelUser]=useState(null);
   const [pwd,setPwd]=useState("");
   const [err,setErr]=useState(false);
+  const [loading,setLoading]=useState(false);
 
-  const check=()=>{
-    if(!selUser) return;
-    const expected=DEPT_PWD[selUser.dept];
-    if(!expected||expected===pwd){onLogin(selUser);}
-    else{setErr(true);setPwd("");}
+  const check = async () => {
+    if (!selUser || loading) return;
+    setLoading(true);
+
+    const isValid = await verifyDeptPassword(selUser.dept, pwd);
+
+    setLoading(false);
+
+    if (isValid) {
+      onLogin(selUser);
+    } else {
+      setErr(true);
+      setPwd("");
+    }
   };
 
   return(
@@ -1015,9 +940,9 @@ function ScreenLogin({onLogin,onBack}){
               </div>
             </div>
             <Lbl ch="CONTRASEÑA DEL DEPARTAMENTO"/>
-            <input type="password" value={pwd} onChange={e=>{setPwd(e.target.value);setErr(false);}} onKeyDown={e=>e.key==="Enter"&&check()} placeholder="Contraseña..." autoFocus style={{...inp,marginBottom:8,borderColor:err?"#DC2626":BD}}/>
+            <input type="password" value={pwd} onChange={e=>{setPwd(e.target.value);setErr(false);}} onKeyDown={async (e)=>{if(e.key==="Enter"&&!loading)await check()}} placeholder="Contraseña..." autoFocus style={{...inp,marginBottom:8,borderColor:err?"#DC2626":BD}} disabled={loading}/>
             {err&&<div style={{fontSize:12,color:"#DC2626",marginBottom:10}}>Contraseña incorrecta.</div>}
-            <button onClick={check} style={{width:"100%",background:PR,color:"#fff",border:"none",padding:"12px",borderRadius:8,fontSize:13,fontWeight:700,cursor:"pointer"}}>Ingresar</button>
+            <button onClick={check} disabled={!pwd.trim()||loading} style={{width:"100%",background:PR,color:"#fff",border:"none",padding:"12px",borderRadius:8,fontSize:13,fontWeight:700,cursor:loading||!pwd.trim()?"not-allowed":"pointer",opacity:loading||!pwd.trim()?0.6:1}}>{loading?"Verificando...":"Ingresar"}</button>
           </Card>
         )}
       </div>
@@ -1105,11 +1030,9 @@ function FormularioAusencia({user,onClose,onSave,ausenciaEditar}){
       if(ff<fi){setError("La fecha de fin debe ser posterior o igual a la de inicio");return false;}
     }
     if(tipo==="permiso"&&!horaPermiso){setError("Ingresa la hora del permiso");return false;}
-    if((tipo==="dia_asignado"||tipo==="esquema_reducido")&&diasSemana.length===0){
-      setError("Selecciona al menos un día de la semana");return false;
-    }
-    if((tipo==="dia_asignado"||tipo==="esquema_reducido")&&recurrencia==="ninguna"){
-      setError("Para días asignados o esquema reducido, la recurrencia es obligatoria");return false;
+    // Para dia_asignado y esquema_reducido con recurrencia (no "ninguna"), validar días de semana
+    if((tipo==="dia_asignado"||tipo==="esquema_reducido")&&recurrencia!=="ninguna"&&diasSemana.length===0){
+      setError("Selecciona al menos un día de la semana para la recurrencia elegida");return false;
     }
     return true;
   };
@@ -1127,6 +1050,9 @@ function FormularioAusencia({user,onClose,onSave,ausenciaEditar}){
     setSaving(true);
     setError("");
 
+    // Debug: verificar valores de hora_entrada y hora_salida antes de armar el payload
+    console.log('[DEBUG] hora_entrada:', horaEntrada, 'hora_salida:', horaSalida);
+
     const payload={
       empleado_nombre:empleado.name,
       empleado_iniciales:empleado.ini,
@@ -1136,16 +1062,17 @@ function FormularioAusencia({user,onClose,onSave,ausenciaEditar}){
       fecha_fin:tipo==="permiso"?fechaInicio:(fechaFin||fechaInicio),
       hora_permiso:tipo==="permiso"?horaPermiso:null,
       tipo_permiso:tipo==="permiso"?tipoPermiso:null,
-      hora_entrada:(tipo==="permiso"||tipo==="esquema_reducido")?(horaEntrada||null):null,
-      hora_salida:(tipo==="permiso"||tipo==="esquema_reducido")?(horaSalida||null):null,
+      hora_entrada:horaEntrada||null,
+      hora_salida:horaSalida||null,
       recurrencia:tipo==="vacaciones"?"ninguna":(recurrencia||"ninguna"),
-      dias_semana:(tipo==="dia_asignado"||tipo==="esquema_reducido")?(diasSemana.length>0?diasSemana:null):null,
+      dias_semana:(tipo==="dia_asignado"||tipo==="esquema_reducido")&&recurrencia!=="ninguna"?(diasSemana.length>0?diasSemana:null):null,
       nota_interna:notaInterna.trim()||null,
       registrado_por:user.name||"Usuario",
       registrado_por_rol:rolRegistroAusencia(user)||"gerente",
     };
 
     console.log(`[FormularioAusencia] Payload a ${modoEdicion?"actualizar":"insertar"}:`,payload);
+    console.log(`[FormularioAusencia] diasSemana array:`,diasSemana,`→ payload.dias_semana:`,payload.dias_semana);
 
     let data,err;
     if(modoEdicion){
@@ -1178,10 +1105,9 @@ function FormularioAusencia({user,onClose,onSave,ausenciaEditar}){
 
     console.log(`[Supabase] ${modoEdicion?"UPDATE":"INSERT"} ausencias exitoso:`,data);
 
-    // Esperar a que se recarguen los datos antes de cerrar
-    console.log("[FormularioAusencia] Llamando a onSave para recargar datos...");
-    await onSave();
-    console.log("[FormularioAusencia] Datos recargados, cerrando modal");
+    // Notificar que se guardó exitosamente - el realtime recargará automáticamente
+    console.log("[FormularioAusencia] Guardado exitoso, cerrando modal");
+    onClose();
   };
 
   return(
@@ -1230,24 +1156,32 @@ function FormularioAusencia({user,onClose,onSave,ausenciaEditar}){
           <input type="time" value={horaSalida} onChange={e=>setHoraSalida(e.target.value)} style={{...inp,marginBottom:16}}/>
         </>)}
 
-        {/* Día asignado / esquema reducido: días de semana + recurrencia */}
+        {/* Día asignado / esquema reducido: recurrencia + días de semana condicionales */}
         {(tipo==="dia_asignado"||tipo==="esquema_reducido")&&(<>
-          <Lbl ch="DÍAS DE LA SEMANA"/>
-          <div style={{display:"flex",gap:8,marginBottom:16}}>
-            {DIAS_SEMANA_OPTS.map(d=>(
-              <button key={d.n} onClick={()=>setDiasSemana(p=>p.includes(d.n)?p.filter(x=>x!==d.n):[...p,d.n])}
-                style={{background:diasSemana.includes(d.n)?PR:BG,color:diasSemana.includes(d.n)?"#fff":T2,border:`1px solid ${diasSemana.includes(d.n)?PR:BD}`,width:40,height:40,borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600,transition:"all .12s"}}>
-                {d.l}
-              </button>
-            ))}
-          </div>
-          <Lbl ch="RECURRENCIA (obligatorio)"/>
-          <select value={recurrencia} onChange={e=>setRecurrencia(e.target.value)} style={{...inp,marginBottom:16}}>
-            <option value="ninguna">Ninguna</option>
+          <Lbl ch="RECURRENCIA (opcional)"/>
+          <select value={recurrencia} onChange={e=>{
+            const newRec=e.target.value;
+            setRecurrencia(newRec);
+            // Si cambia a "ninguna", limpiar días de semana
+            if(newRec==="ninguna")setDiasSemana([]);
+          }} style={{...inp,marginBottom:16}}>
+            <option value="ninguna">Sin repetición</option>
             <option value="semanal">Semanal</option>
             <option value="quincenal">Quincenal</option>
             <option value="mensual">Mensual</option>
           </select>
+          {/* Días de la semana: solo mostrar si hay recurrencia */}
+          {recurrencia!=="ninguna"&&(<>
+            <Lbl ch="DÍAS DE LA SEMANA"/>
+            <div style={{display:"flex",gap:8,marginBottom:16}}>
+              {DIAS_SEMANA_OPTS.map(d=>(
+                <button key={d.n} onClick={()=>setDiasSemana(p=>p.includes(d.n)?p.filter(x=>x!==d.n):[...p,d.n])}
+                  style={{background:diasSemana.includes(d.n)?PR:BG,color:diasSemana.includes(d.n)?"#fff":T2,border:`1px solid ${diasSemana.includes(d.n)?PR:BD}`,width:40,height:40,borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600,transition:"all .12s"}}>
+                  {d.l}
+                </button>
+              ))}
+            </div>
+          </>)}
           {tipo==="esquema_reducido"&&(<>
             <Lbl ch="HORA DE ENTRADA (opcional)"/>
             <input type="time" value={horaEntrada} onChange={e=>setHoraEntrada(e.target.value)} style={{...inp,marginBottom:16}}/>
@@ -1774,8 +1708,8 @@ function ScreenAusencias({user,ausencias,onBack,cargarAusencias}){
       </div>
 
       {/* Formulario modal */}
-      {formOpen&&<FormularioAusencia user={user} onClose={()=>setFormOpen(false)} ausenciaEditar={ausenciaEditar} onSave={async()=>{
-        await cargarAusencias();
+      {formOpen&&<FormularioAusencia user={user} onClose={()=>{setFormOpen(false);setAusenciaEditar(null);}} ausenciaEditar={ausenciaEditar} onSave={()=>{
+        // El realtime recargará automáticamente, solo cerramos
         setFormOpen(false);
         setAusenciaEditar(null);
       }}/>}
@@ -1875,7 +1809,7 @@ function CalendarioSemanal({ausencias,user,onOpenDetalle}){
                   const esHoy=fmtISODateLocal(d)===hoy;
                   return(
                     <th key={i} style={{textAlign:"center",padding:"8px 12px",fontSize:11,fontWeight:600,color:esHoy?PR:T3,background:esHoy?PRl+"80":undefined,borderRadius:esHoy?"8px 8px 0 0":undefined}}>
-                      {DAYS_ES[i]}<br/>{d.getDate()}
+                      {DAYS_WORK[i]}<br/>{d.getDate()}
                     </th>
                   );
                 })}
@@ -2625,15 +2559,26 @@ function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDe
 
   const handleChangePriority=(task,direction)=>{
     if(!isDireccion&&task.createdBy?.id!==user?.id) return;
+
+    // 1. Obtener todas las tareas del departamento ordenadas por prioridad
     const tasksInDept=quickTasks.filter(t=>t.dept===task.dept&&!t.deleted).sort((a,b)=>a.priority-b.priority);
     const idx=tasksInDept.findIndex(t=>t.id===task.id);
     if(idx===-1) return;
     if(direction==="up"&&idx===0) return;
     if(direction==="down"&&idx===tasksInDept.length-1) return;
+
+    // 2. Reordenar el array: mover la tarea en la dirección indicada
+    const reordered=[...tasksInDept];
     const swapIdx=direction==="up"?idx-1:idx+1;
-    const tempPriority=task.priority;
-    onUpdateTask(task.id,{priority:tasksInDept[swapIdx].priority});
-    onUpdateTask(tasksInDept[swapIdx].id,{priority:tempPriority});
+    [reordered[idx],reordered[swapIdx]]=[reordered[swapIdx],reordered[idx]];
+
+    // 3. Reasignar prioridades secuenciales (1, 2, 3, 4...)
+    reordered.forEach((t,i)=>{
+      const newPriority=i+1;
+      if(t.priority!==newPriority){
+        onUpdateTask(t.id,{priority:newPriority});
+      }
+    });
   };
 
   const handleSendComment=()=>{
@@ -3166,7 +3111,27 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
   const canEdit=canChangeState;
   const invIds=task.invIds||[];const flowStates=task.flowStates||{};
   const flowStageIds=getStageIds(invIds,task.flowStageIds);
-  const myInvIndex=user?invIds.indexOf(user.id):-1;
+
+  // FIX: Cuando el usuario aparece múltiples veces, encontrar el nodo activo correcto
+  // (primera ocurrencia NO completada donde la etapa anterior está completa)
+  const myInvIndex=user?(() => {
+    const userOccurrences=invIds.map((id,idx)=>id===user.id?idx:-1).filter(idx=>idx!==-1);
+    if(userOccurrences.length===0) return -1;
+    if(userOccurrences.length===1) return userOccurrences[0];
+
+    // Usuario aparece múltiples veces: encontrar el nodo activo
+    for(const idx of userOccurrences){
+      const myState=flowStates[flowStageIds[idx]]||"Pendiente";
+      const prevDone=idx===0||["En proceso","Completado"].includes(flowStates[flowStageIds[idx-1]]||"Pendiente");
+
+      // Si este nodo NO está completado y la etapa anterior SÍ está completa, es el nodo activo
+      if(myState!=="Completado"&&prevDone) return idx;
+    }
+
+    // Si todos están completados o ninguno está listo, devolver la primera ocurrencia
+    return userOccurrences[0];
+  })():-1;
+
   const isInvolved=myInvIndex!==-1;
   const prevDone=myInvIndex===0||["En proceso","Completado"].includes(flowStates[flowStageIds[myInvIndex-1]]||"Pendiente");
   const canChangeOwnStep=isInvolved&&prevDone;
@@ -3400,11 +3365,7 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
                                 <div style={{fontSize:13,color:T1,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{att.nombre}</div>
                                 <div style={{fontSize:11,color:T3}}>{att.subidoPor?.name||"—"} · {fmtDT(att.fecha)}</div>
                               </div>
-                              <button onClick={async()=>{
-                                  const{data,error}=await supabase.storage.from("task-attachments").createSignedUrl(att.url,60);
-                                  if(error){alert("No se pudo generar el enlace de descarga: "+error.message);return;}
-                                  window.open(data.signedUrl,"_blank");
-                                }}
+                              <button onClick={()=>downloadAttachmentIOS(att)}
                                 style={{background:"none",border:`1px solid ${BD}`,borderRadius:6,padding:"6px 12px",cursor:"pointer",fontSize:11,fontWeight:600,color:PR,flexShrink:0}}>
                                 ⬇ Descargar
                               </button>
@@ -3790,9 +3751,7 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onDeleteAviso,
   };
 
   const handleDownloadAttachment=async att=>{
-    const{data,error}=await supabase.storage.from("task-attachments").createSignedUrl(att.url,60);
-    if(error){alert("No se pudo generar el enlace de descarga: "+error.message);return;}
-    window.open(data.signedUrl,"_blank");
+    await downloadAttachmentIOS(att);
   };
 
   const postAvisoComment=()=>{
@@ -4543,7 +4502,7 @@ function ScreenDeletedTasks({deletedTasks,user,onBack}){
 /* ════════════════════════════════════════
    SCREEN: NOTIFICACIONES
 ════════════════════════════════════════ */
-function ScreenNotificaciones({tasks,avisos,user,onBack,onTaskClick,onAvisoClick}){
+function ScreenNotificaciones({tasks,avisos,user,onBack,onTaskClick,onAvisoClick,lastNotifView}){
   const isMobile=useIsMobile();
 
   const items=useMemo(()=>{
@@ -4600,6 +4559,8 @@ function ScreenNotificaciones({tasks,avisos,user,onBack,onTaskClick,onAvisoClick
     return list.filter(x=>x.date).sort((a,b)=>new Date(b.date)-new Date(a.date));
   },[tasks,avisos,user]);
 
+  const sinceDate=lastNotifView?new Date(lastNotifView):new Date(0);
+
   const fmtFecha=d=>new Date(d).toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"})+" "+new Date(d).toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"});
 
   return(
@@ -4614,9 +4575,12 @@ function ScreenNotificaciones({tasks,avisos,user,onBack,onTaskClick,onAvisoClick
       />
       <div style={{maxWidth:760,margin:"0 auto",padding:"24px"}}>
         {items.length===0&&<div style={{textAlign:"center",padding:"60px 0",color:T3,fontSize:14}}>Sin notificaciones aún</div>}
-        {items.map((item,i)=>(
+        {items.map((item,i)=>{
+          const isNew=new Date(item.date)>sinceDate;
+          const bgColor=isNew?"#FFFDF0":CARD;
+          return(
           <div key={i} onClick={item.task?()=>onTaskClick(item.task):item.aviso?()=>onAvisoClick(item.aviso):undefined}
-            style={{display:"flex",gap:12,alignItems:"flex-start",background:CARD,border:`1px solid ${BD}`,borderLeft:`3px solid ${item.color}`,borderRadius:12,padding:"14px 16px",marginBottom:10,cursor:(item.task||item.aviso)?"pointer":"default",transition:"box-shadow .12s"}}
+            style={{display:"flex",gap:12,alignItems:"flex-start",background:bgColor,border:`1px solid ${BD}`,borderLeft:`3px solid ${item.color}`,borderRadius:12,padding:"14px 16px",marginBottom:10,cursor:(item.task||item.aviso)?"pointer":"default",transition:"box-shadow .12s"}}
             onMouseEnter={e=>{if(item.task||item.aviso)e.currentTarget.style.boxShadow=SH;}}
             onMouseLeave={e=>{e.currentTarget.style.boxShadow="none";}}>
             <div style={{width:36,height:36,borderRadius:10,background:item.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{item.icon}</div>
@@ -4631,7 +4595,8 @@ function ScreenNotificaciones({tasks,avisos,user,onBack,onTaskClick,onAvisoClick
               )}
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -4662,7 +4627,24 @@ export default function App(){
   const [ausencias,     setAusencias]    = useState([]);
   const [deletedTasks,  setDeletedTasks] = useState([]);
   const [saveError,     setSaveError]    = useState(null);
-  const [lastNotifView, setLastNotifView]= useState(()=>localStorage.getItem("taskops_last_notif_view")||null);
+  const [lastNotifView, setLastNotifView]= useState(()=>{
+    if(!user) return null;
+    return localStorage.getItem(`taskops_last_notif_view_${user.id}`)||null;
+  });
+  const [showPushBanner, setShowPushBanner]= useState(false);
+  const [pushEnabled, setPushEnabled]= useState(()=>localStorage.getItem("taskops_push_enabled")==="true");
+
+  // Mostrar banner de notificaciones push si el usuario no ha decidido aún
+  useEffect(()=>{
+    if(!user) return;
+    const hasDecided=localStorage.getItem("taskops_push_decided");
+    const isPushSupported="serviceWorker" in navigator && "PushManager" in window;
+    if(!hasDecided && isPushSupported && !pushEnabled){
+      // Mostrar el banner después de 3 segundos de que el usuario inicie sesión
+      const timer=setTimeout(()=>setShowPushBanner(true),3000);
+      return ()=>clearTimeout(timer);
+    }
+  },[user,pushEnabled]);
 
   // Persistir authedDepts en sessionStorage: un reload (ej. tras actualizar el
   // Service Worker) no debe forzar a re-meter la contraseña de departamento
@@ -4724,17 +4706,20 @@ export default function App(){
     return ()=>supabase.removeChannel(ch);
   },[]);
 
-  // Función para cargar ausencias (±6 meses)
+  // Función para cargar ausencias (±6 meses) - siempre con fechas frescas
   const cargarAusencias=useCallback(()=>{
     const desde=new Date();desde.setMonth(desde.getMonth()-6);
     const hasta=new Date();hasta.setMonth(hasta.getMonth()+6);
+    const fechaDesde=fmtISODateLocal(desde);
+    const fechaHasta=fmtISODateLocal(hasta);
+    console.log(`[cargarAusencias] Cargando rango: ${fechaDesde} → ${fechaHasta}`);
     supabase.rpc("get_ausencias_en_rango",{
-      fecha_desde:fmtISODateLocal(desde),
-      fecha_hasta:fmtISODateLocal(hasta)
+      fecha_desde:fechaDesde,
+      fecha_hasta:fechaHasta
     }).then(({data,error})=>{
       if(error){console.error("[Supabase] Error get_ausencias_en_rango:",error.message);return;}
-      console.log(`[Supabase] Ausencias cargadas — ${data?.length||0} registros`);
-      setAusencias(data||[]);
+      console.log(`[Supabase] Ausencias cargadas — ${data?.length||0} registros - reemplazando estado completo`);
+      setAusencias(data||[]); // Reemplazar completo, no hacer merge
     });
   },[]);
 
@@ -5361,7 +5346,32 @@ export default function App(){
   },[quickTasks,user]);
 
   const logout=()=>{localStorage.removeItem("taskops_user");sessionStorage.removeItem("taskops_authed_depts");setUser(null);setAuthedDepts([]);setScreen("dash");};
-  const openNotif=()=>{const now=new Date().toISOString();localStorage.setItem("taskops_last_notif_view",now);setLastNotifView(now);setScreen("notif");};
+  const openNotif=()=>{
+    setScreen("notif");
+    // Actualizar el timestamp después de 2 segundos para que el usuario vea cuáles son nuevas
+    setTimeout(()=>{
+      if(!user) return;
+      const now=new Date().toISOString();
+      localStorage.setItem(`taskops_last_notif_view_${user.id}`,now);
+      setLastNotifView(now);
+    },2000);
+  };
+  const enablePushNotifications=async()=>{
+    if(!user) return;
+    setShowPushBanner(false);
+    localStorage.setItem("taskops_push_decided","true");
+    try{
+      await registerPush(user);
+      setPushEnabled(true);
+      localStorage.setItem("taskops_push_enabled","true");
+    }catch(err){
+      console.error("[Push] Error al activar notificaciones:",err);
+    }
+  };
+  const dismissPushBanner=()=>{
+    setShowPushBanner(false);
+    localStorage.setItem("taskops_push_decided","true");
+  };
   const unreadNotif=useMemo(()=>{
     if(!user) return 0;
     const since=lastNotifView?new Date(lastNotifView):new Date(0);
@@ -5382,7 +5392,7 @@ export default function App(){
     return n;
   },[tasks,avisos,user,lastNotifView]);
   const goTask=(t,from)=>{setSelTask(t);setFromScr(from||screen);setScreen("task");};
-  const userIsAuthed = user && (!DEPT_PWD[user.dept] || authedDepts.includes(user.dept));
+  const userIsAuthed = user && authedDepts.includes(user.dept);
   const canAddInDept=dept=>{if(!user)return false;if(user.dept==="Dirección")return true;if(user.dept===dept)return true;return authedDepts.includes(dept);};
   const onPickerDeptClick=dept=>{if(canAddInDept(dept)){setSelDept(dept);setDeptCanAdd(true);setScreen("dept");}else setPwdModal({dept});};
   const onWidgetDeptClick=dept=>{setSelDept(dept);setDeptCanAdd(canAddInDept(dept));setScreen("dept");};
@@ -5412,7 +5422,7 @@ export default function App(){
     setFromScr("dash");
     setScreen("dash");
     localStorage.setItem("taskops_user",JSON.stringify(u));
-    registerPush(u);
+    // Ya NO llamamos registerPush() automáticamente - se activará con interacción explícita
   }} onBack={()=>setScreen("dash")}/></>;
 
   if(screen==="create"&&user) return <><style>{CSS}</style><ScreenCreate user={user} taskCount={tasks.length} defaultDept={createDept} saveError={saveError} onSave={t=>{return addTask(t).then(ok=>{if(ok)setScreen(createDept?"dept":"dash");}).catch(err=>{console.error("[onSave] Error:",err);});}} onCancel={()=>{setSaveError(null);setScreen(createDept?"dept":"dash");}}/></>;
@@ -5455,7 +5465,7 @@ export default function App(){
 
   if(screen==="avisos"&&user) return <><style>{CSS}</style><ScreenAviso user={user} avisos={avisos} onSend={sendAviso} onMarkRead={markAvisoRead} onUpdateAviso={updateAviso} onDeleteAviso={deleteAviso} onBack={()=>{setSelAviso(null);setScreen("dash");}} initialSelected={selAviso}/></>;
 
-  if(screen==="notif"&&user) return <><style>{CSS}</style><ScreenNotificaciones tasks={tasks} avisos={avisos} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"notif")} onAvisoClick={a=>{setSelAviso(a);setScreen("avisos");}}/></>;
+  if(screen==="notif"&&user) return <><style>{CSS}</style><ScreenNotificaciones tasks={tasks} avisos={avisos} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"notif")} onAvisoClick={a=>{setSelAviso(a);setScreen("avisos");}} lastNotifView={lastNotifView}/></>;
 
   if(screen==="ausencias") return <><style>{CSS}</style><ScreenAusencias user={user} ausencias={ausencias} onBack={()=>setScreen("dash")} cargarAusencias={cargarAusencias}/></>;
 
@@ -5496,6 +5506,21 @@ export default function App(){
       />
       {pwdModal&&<PasswordModal dept={pwdModal.dept} onSuccess={handlePwdSuccess} onViewOnly={handleViewOnly} onCancel={()=>setPwdModal(null)} hideViewOnly={!!pwdModal.fromFab}/>}
       {deleteTask&&<DeleteModal task={deleteTask} onConfirm={()=>{deleteTaskFn(deleteTask.id);setDeleteTask(null);}} onCancel={()=>setDeleteTask(null)}/>}
+      {showPushBanner&&(
+        <div style={{position:"fixed",bottom:20,left:"50%",transform:"translateX(-50%)",maxWidth:480,width:"calc(100% - 40px)",background:"#1E293B",color:"#fff",borderRadius:12,padding:"16px 20px",boxShadow:"0 10px 25px rgba(0,0,0,.3)",zIndex:9999,display:"flex",alignItems:"center",gap:12}}>
+          <div style={{fontSize:24}}>🔔</div>
+          <div style={{flex:1}}>
+            <div style={{fontSize:14,fontWeight:700,marginBottom:4}}>Activa las notificaciones</div>
+            <div style={{fontSize:12,color:"#CBD5E1",lineHeight:1.4}}>Recibe alertas instantáneas de comentarios, tareas asignadas y actualizaciones.</div>
+          </div>
+          <button onClick={enablePushNotifications} style={{background:"#3B82F6",color:"#fff",border:"none",padding:"8px 16px",borderRadius:8,fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+            Activar
+          </button>
+          <button onClick={dismissPushBanner} style={{background:"transparent",color:"#94A3B8",border:"none",fontSize:20,cursor:"pointer",padding:"4px 8px",lineHeight:1}}>
+            ×
+          </button>
+        </div>
+      )}
     </>
   );
 }
