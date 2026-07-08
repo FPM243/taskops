@@ -8,26 +8,15 @@ import {
   TT, SC, PC, FS_CFG, BLANK, MONTHS_ES, DAYS_ES, DAYS_WORK, IT, LOGO_URL,
   BG, CARD, BD, T1, T2, T3, PR, PRl, SH, SHm, fnt, inp, CSS
 } from "./lib/constants";
+import {
+  safeDate, safeDays, fmtDT, fmtCompletedDate, fmtDate, fmtISODateLocal, isoWeekday, isTodayDeadline,
+  diasHabilesAusencia, fmtFechaCortaAusencia, fmtRangoAusencia, puedeRegistrarAusencias, esRHAusencias, rolRegistroAusencia,
+  dc, getInvolved, shortName, isOver, isActive, isAtRisk, dlStatus, isActiveStatus,
+  avisoRecipients, avisoIncludesUser, genStageId, getStageIds, calcProgress,
+  getAssignableIds, verifyDeptPassword
+} from "./lib/helpers";
 
-function safeDate(dateStr) {
-  if(!dateStr) return null;
-  try {
-    if(dateStr.includes("T")) return new Date(dateStr);
-    return new Date(dateStr + "T12:00:00");
-  } catch(e) { return null; }
-}
-
-function safeDays(dateStr) {
-  const d = safeDate(dateStr);
-  if(!d || isNaN(d.getTime())) return 0;
-  return Math.max(0, Math.round((new Date() - d) / 86400000));
-}
-
-function fmtDT(iso) {
-  const d = new Date(iso);
-  if(isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"})+" "+d.toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"});
-}
+// Funciones utilitarias movidas a src/lib/helpers.js
 
 /* ════════════════════════════════════════
    PUSH NOTIFICATIONS
@@ -180,93 +169,11 @@ async function sendSMSNotification(type, toPhones, data) {
 ════════════════════════════════════════ */
 // (Constantes movidas a src/lib/constants.js)
 
-// Función para validar contraseña server-side
-async function verifyDeptPassword(dept, password) {
-  try {
-    const response = await fetch(
-      `${SUPABASE_URL}/functions/v1/verify-dept-password`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${SUPABASE_ANON_KEY}`
-        },
-        body: JSON.stringify({ dept, password })
-      }
-    );
-
-    // Manejar rate limiting
-    if (response.status === 429) {
-      const data = await response.json();
-      alert(`Demasiados intentos. Espera ${data.retryAfter || 60} segundos.`);
-      return false;
-    }
-
-    if (!response.ok) {
-      console.error("[Auth] Error en verificación:", response.status);
-      return false;
-    }
-
-    const data = await response.json();
-    return data.valid === true;
-  } catch (err) {
-    console.error("[Auth] Error verificando contraseña:", err);
-    return false;
-  }
-}
-
-const getAssignableIds = user => {
-  if (!user) return [];
-  if (user.dept === "Dirección") return USERS.map(u => u.id);
-  const ids = ASSIGN_MATRIX[user.dept];
-  if (ids) return [...new Set([user.id, ...ids])];
-  return [user.id];
-};
+// verifyDeptPassword y getAssignableIds movidas a src/lib/helpers.js
 // ════════════════════════════════════════
 // MÓDULO DE AUSENCIAS — FASE 1
 // ════════════════════════════════════════
-// No hay un campo de rol explícito en USERS (el sistema usa sesión por
-// departamento), así que el permiso para registrar ausencias se mapea por
-// id: son los mismos usuarios que ya actúan como "jefe de depto" en el
-// resto del sistema — Dirección, cada "Gerente de X" y RR.HH.
-const puedeRegistrarAusencias = user => !!user && PUEDE_REGISTRAR_AUSENCIAS.includes(user.id);
-const esRHAusencias = user => user?.dept === "RR.HH";
-// La columna registrado_por_rol solo acepta 'rh' o 'gerente'; Dirección
-// registra "como gerente" para efectos de esa columna.
-const rolRegistroAusencia = user => esRHAusencias(user) ? "rh" : "gerente";
-
-// Formatea una fecha local como YYYY-MM-DD sin pasar por toISOString():
-// toISOString() convierte a UTC y puede mostrar el día equivocado para
-// zonas horarias negativas (ej. México, UTC-6) — el mismo problema que
-// safeDate() ya evita en el resto del archivo.
-const fmtISODateLocal = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-const isoWeekday = d => { const wd=d.getDay(); return wd===0?7:wd; };
-
-function diasHabilesAusencia(fechaInicio,fechaFin){
-  if(!fechaInicio||!fechaFin) return 0;
-  let count=0;
-  let current=new Date(fechaInicio+"T12:00:00");
-  const fin=new Date(fechaFin+"T12:00:00");
-  while(current<=fin){
-    const dow=current.getDay();
-    if(dow!==0&&dow!==6) count++;
-    current.setDate(current.getDate()+1);
-  }
-  return count;
-}
-
-const fmtFechaCortaAusencia = fStr => {
-  if(!fStr) return "";
-  const d=new Date(fStr+"T12:00:00");
-  return `${d.getDate()} ${MONTHS_ES[d.getMonth()].slice(0,3)}`;
-};
-const fmtRangoAusencia = (desde,hasta) => {
-  if(!desde) return "";
-  if(!hasta||desde===hasta) return fmtFechaCortaAusencia(desde);
-  const d1=new Date(desde+"T12:00:00"),d2=new Date(hasta+"T12:00:00");
-  if(d1.getMonth()===d2.getMonth()) return `${d1.getDate()}–${d2.getDate()} ${MONTHS_ES[d2.getMonth()].slice(0,3)}`;
-  return `${fmtFechaCortaAusencia(desde)} – ${fmtFechaCortaAusencia(hasta)}`;
-};
+// Funciones de ausencias movidas a src/lib/helpers.js
 
 /* ════════════════════════════════════════
    DESIGN TOKENS & CSS
@@ -276,63 +183,7 @@ const fmtRangoAusencia = (desde,hasta) => {
 /* ════════════════════════════════════════
    UTILITIES
 ════════════════════════════════════════ */
-const dc = dept => DEPT_COLORS[dept] || "#6B7280";
-const getInvolved = ids => (ids||[]).map(id=>USERS.find(u=>u.id===id)).filter(Boolean);
-const shortName = n => n.replace("Gerente de ","");
-const isOver   = (d,st) => new Date(d)<new Date()&&st!=="Completada"&&st!=="Cancelada"&&st!=="Bloqueada";
-const isActive = t => t.status!=="Completada"&&t.status!=="Cancelada";
-const isAtRisk = t => {
-  if(!isActive(t)||!t.deadline||isOver(t.deadline,t.status)||t.status==="Bloqueada") return false;
-  const dt=new Date(t.deadline+"T12:00:00"),now=new Date(); now.setHours(0,0,0,0);
-  const diff=Math.round((dt-now)/86400000); return diff>=0&&diff<=2;
-};
-const isTodayDeadline = d => {
-  const dt=new Date(d+"T12:00:00"), now=new Date();
-  return dt.toDateString()===now.toDateString();
-};
-// Destinatarios de un aviso: soporta el array nuevo (destinatarioIds) y
-// cae de vuelta al campo viejo singular (destinatarioId) para avisos
-// existentes en Supabase — no requiere migración de datos.
-const avisoRecipients = a => a.destinatarioIds!==undefined ? a.destinatarioIds : a.destinatarioId;
-const avisoIncludesUser = (a,uid) => {
-  const d=avisoRecipients(a);
-  if(d==="todos") return true;
-  if(Array.isArray(d)) return d.includes(uid);
-  return d===uid;
-};
-const genStageId = () => `st${Date.now().toString(36)}${Math.random().toString(36).slice(2,7)}`;
-const getStageIds = (invIds,flowStageIds) => (flowStageIds&&flowStageIds.length===invIds.length) ? flowStageIds : invIds.map((_,i)=>String(i));
-const calcProgress = (invIds,flowStates,flowStageIds) => {
-  if(!invIds||!invIds.length) return null;
-  const sids=getStageIds(invIds,flowStageIds);
-  const vals=invIds.map((_,idx)=>{const s=flowStates?.[sids[idx]]||"Pendiente";return s==="Completado"?100:s==="En proceso"?50:0;});
-  return Math.round(vals.reduce((a,b)=>a+b,0)/vals.length);
-};
-function fmtDate(d){
-  if(!d) return "";
-  const dt=new Date(d+"T12:00:00"),today=new Date(); today.setHours(0,0,0,0);
-  const diff=Math.round((dt-today)/86400000);
-  if(diff<0)   return `Vencida hace ${Math.abs(diff)}d`;
-  if(diff===0) return "Vence HOY";
-  if(diff===1) return "Vence mañana";
-  return dt.toLocaleDateString("es-MX",{day:"numeric",month:"short"});
-}
-function fmtCompletedDate(d){
-  if(!d) return "—";
-  const dt=new Date(d.includes("T")?d:d+"T12:00:00");
-  return dt.toLocaleDateString("es-MX",{day:"numeric",month:"short",year:"numeric"});
-}
-function dlStatus(deadline,status){
-  if(!deadline) return {label:"",c:T2,bg:"#F9FAFB",isOver:false,isToday:false};
-  const active=status!=="Completada"&&status!=="Cancelada"&&status!=="Bloqueada";
-  const dt=new Date(deadline+"T12:00:00"),now=new Date(); now.setHours(0,0,0,0);
-  const diff=Math.round((dt-now)/86400000);
-  if(!active) return {label:fmtDate(deadline),c:T2,bg:"#F9FAFB",isOver:false,isToday:false};
-  if(diff<0)  return {label:`Vencida hace ${Math.abs(diff)}d`,c:"#DC2626",bg:"#FEF2F2",isOver:true,isToday:false};
-  if(diff===0)return {label:"Vence HOY",c:"#EA580C",bg:"#FFF7ED",isOver:false,isToday:true};
-  if(diff<=3) return {label:fmtDate(deadline),c:"#D97706",bg:"#FFFBEB",isOver:false,isToday:false};
-  return {label:fmtDate(deadline),c:"#059669",bg:"#ECFDF5",isOver:false,isToday:false};
-}
+// Funciones utilitarias movidas a src/lib/helpers.js
 
 function useIsMobile(){
   const [m,setM]=useState(()=>window.innerWidth<768);
