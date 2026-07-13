@@ -199,7 +199,18 @@ export const inp={background:CARD,border:`1px solid ${BD}`,color:T1,padding:"10p
 export const CSS=`
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
 *{box-sizing:border-box;margin:0;padding:0;}
-body,#root{min-height:100vh;background:${BG};font-family:'Plus Jakarta Sans',system-ui,sans-serif;}
+body,#root{
+  min-height:100vh;
+  background:${BG};
+  font-family:'Plus Jakarta Sans',system-ui,sans-serif;
+  padding-left:env(safe-area-inset-left);
+  padding-right:env(safe-area-inset-right);
+  padding-top:env(safe-area-inset-top);
+  padding-bottom:env(safe-area-inset-bottom);
+  width:100%;
+  max-width:100%;
+  overflow-x:hidden;
+}
 ::-webkit-scrollbar{width:5px;} ::-webkit-scrollbar-thumb{background:#C7D2E8;border-radius:10px;}
 .rw:hover{background:#F8FAFF!important;} .rw{transition:background .12s;cursor:pointer;}
 .ub:hover{background:${PR}!important;color:#fff!important;border-color:${PR}!important;} .ub{transition:all .15s;}

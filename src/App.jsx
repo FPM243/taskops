@@ -399,8 +399,8 @@ function FlowDiagram({invIds,flowStates,flowStageIds,onReorder,onStateChange,can
                   ):null}
                 </div>
               )}
-              {/* Fila de adjuntos (ancho completo) */}
-              {nodeCanChange&&(
+              {/* Fila de adjuntos (ancho completo) - siempre visible si hay adjuntos o si se puede editar */}
+              {(nodeAttachments.length>0||nodeCanChange)&&(
                 <div style={{width:"100%",marginTop:8}}>
                   <div style={{fontSize:11,fontWeight:600,color:T2,letterSpacing:.4,marginBottom:6}}>📎 ARCHIVOS ADJUNTOS</div>
                   {nodeAttachments.length>0&&(
@@ -416,21 +416,27 @@ function FlowDiagram({invIds,flowStates,flowStageIds,onReorder,onStateChange,can
                               style={{background:"none",border:`1px solid ${BD}`,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:600,color:fc.c,fontFamily:"inherit"}}>
                               ⬇ Descargar
                             </button>
-                            <button onClick={()=>handleDeleteAttachment(att)} title="Borrar adjunto"
-                              style={{background:"none",border:`1px solid ${BD}`,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:600,color:"#DC2626",fontFamily:"inherit"}}>
-                              🗑️
-                            </button>
+                            {nodeCanChange&&(
+                              <button onClick={()=>handleDeleteAttachment(att)} title="Borrar adjunto"
+                                style={{background:"none",border:`1px solid ${BD}`,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:600,color:"#DC2626",fontFamily:"inherit"}}>
+                                🗑️
+                              </button>
+                            )}
                           </div>
                         </div>
                       ))}
                     </div>
                   )}
-                  <label style={{display:"inline-flex",alignItems:"center",gap:6,background:"rgba(255,255,255,.7)",border:`1px dashed ${BD}`,borderRadius:6,padding:"6px 12px",cursor:uploading[i]?"default":"pointer",fontSize:12,fontWeight:600,color:T2}}>
-                    {uploading[i]?"Subiendo...":"+ Adjuntar archivo"}
-                    <input type="file" disabled={!!uploading[i]} style={{display:"none"}}
-                      onChange={e=>{const f=e.target.files?.[0];handleUpload(i,f);e.target.value="";}}/>
-                  </label>
-                  {uploadErr[i]&&<div style={{fontSize:11,color:"#DC2626",marginTop:4}}>{uploadErr[i]}</div>}
+                  {nodeCanChange&&(
+                    <>
+                      <label style={{display:"inline-flex",alignItems:"center",gap:6,background:"rgba(255,255,255,.7)",border:`1px dashed ${BD}`,borderRadius:6,padding:"6px 12px",cursor:uploading[i]?"default":"pointer",fontSize:12,fontWeight:600,color:T2}}>
+                        {uploading[i]?"Subiendo...":"+ Adjuntar archivo"}
+                        <input type="file" disabled={!!uploading[i]} style={{display:"none"}}
+                          onChange={e=>{const f=e.target.files?.[0];handleUpload(i,f);e.target.value="";}}/>
+                      </label>
+                      {uploadErr[i]&&<div style={{fontSize:11,color:"#DC2626",marginTop:4}}>{uploadErr[i]}</div>}
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -3197,38 +3203,6 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
                 user={user}
                 onAttachmentsChange={atts=>onUpdate(taskId,{attachments:atts})}/>
             </Card>
-            {/* Attachments overview */}
-            {(task.attachments||[]).length>0&&(
-              <Card sx={{padding:20}}>
-                <Lbl ch="ARCHIVOS ADJUNTOS"/>
-                <div style={{display:"flex",flexDirection:"column",gap:14}}>
-                  {invIds.map((uid,idx)=>{
-                    const nodeAtts=(task.attachments||[]).filter(a=>String(a.nodeIndex)===String(flowStageIds[idx]));
-                    if(nodeAtts.length===0) return null;
-                    const nodeUser=USERS.find(x=>x.id===uid);
-                    return(
-                      <div key={idx}>
-                        <div style={{fontSize:11,fontWeight:700,color:T2,marginBottom:6}}>Etapa {idx+1} · {nodeUser?.name||"—"}</div>
-                        <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                          {nodeAtts.map((att,ai)=>(
-                            <div key={ai} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,background:BG,borderRadius:8,padding:"8px 12px"}}>
-                              <div style={{minWidth:0,flex:1}}>
-                                <div style={{fontSize:13,color:T1,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{att.nombre}</div>
-                                <div style={{fontSize:11,color:T3}}>{att.subidoPor?.name||"—"} · {fmtDT(att.fecha)}</div>
-                              </div>
-                              <button onClick={()=>downloadAttachmentIOS(att)}
-                                style={{background:"none",border:`1px solid ${BD}`,borderRadius:6,padding:"6px 12px",cursor:"pointer",fontSize:11,fontWeight:600,color:PR,flexShrink:0}}>
-                                ⬇ Descargar
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </Card>
-            )}
             {/* Flow log */}
             {(task.flowLog||[]).length>0&&(
               <Card sx={{padding:20}}>

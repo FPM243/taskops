@@ -1,0 +1,18 @@
+{
+  "name": "NEXUS",
+  "short_name": "NEXUS",
+  "description": "Sistema de gestión de tareas y ausencias",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F0F4FF",
+  "theme_color": "#4338CA",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
