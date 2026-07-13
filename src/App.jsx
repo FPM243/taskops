@@ -281,6 +281,7 @@ function FlowDiagram({invIds,flowStates,flowStageIds,onReorder,onStateChange,can
   const [showAll,setShowAll]=useState(false);
   const [uploading,setUploading]=useState({});
   const [uploadErr,setUploadErr]=useState({});
+  const [completedBlockMsg,setCompletedBlockMsg]=useState(null);
   if(!nodes.length) return <div style={{color:T3,fontSize:13,textAlign:"center",padding:"16px 0"}}>Sin involucrados definidos</div>;
   const handleUpload=async(idx,file)=>{
     if(!file) return;
@@ -342,13 +343,34 @@ function FlowDiagram({invIds,flowStates,flowStageIds,onReorder,onStateChange,can
                   <div style={{fontSize:11,color:T2}}>{u.dept}</div>
                 </div>
                 {nodeCanChange?(
-                  <div style={{display:"flex",gap:4,flexWrap:"wrap",justifyContent:"flex-end",flexShrink:0}}>
-                    {Object.entries(FS_CFG).map(([s,c])=>(
-                      <button key={s} onClick={()=>onStateChange(sids[i],s)}
-                        style={{background:st===s?c.c:CARD,color:st===s?"#fff":c.c,border:`1px solid ${c.c}`,padding:"4px 10px",borderRadius:20,cursor:"pointer",fontSize:11,fontWeight:600,transition:"all .1s"}}>
-                        {c.icon} {s}
-                      </button>
-                    ))}
+                  <div style={{display:"flex",flexDirection:"column",gap:4,alignItems:"flex-end",flexShrink:0}}>
+                    <div style={{display:"flex",gap:4,flexWrap:"wrap",justifyContent:"flex-end"}}>
+                      {Object.entries(FS_CFG).map(([s,c])=>{
+                        const isLast=i===nodes.length-1;
+                        const allPrevCompleted=isLast?nodes.slice(0,-1).every((_,idx)=>(flowStates[sids[idx]]||"Pendiente")==="Completado"):true;
+                        const isBlocked=isLast&&s==="Completado"&&!allPrevCompleted;
+                        return(
+                          <button key={s}
+                            onClick={()=>{
+                              if(isBlocked){
+                                setCompletedBlockMsg(i);
+                                setTimeout(()=>setCompletedBlockMsg(null),3000);
+                                return;
+                              }
+                              onStateChange(sids[i],s);
+                            }}
+                            disabled={isBlocked}
+                            style={{background:st===s?c.c:CARD,color:st===s?"#fff":c.c,border:`1px solid ${c.c}`,padding:"4px 10px",borderRadius:20,cursor:isBlocked?"not-allowed":"pointer",fontSize:11,fontWeight:600,transition:"all .1s",opacity:isBlocked?0.5:1}}>
+                            {c.icon} {s}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {completedBlockMsg===i&&(
+                      <div style={{fontSize:11,color:"#DC2626",marginTop:4,fontWeight:600}}>
+                        ⚠️ Todos los pasos anteriores deben estar completos
+                      </div>
+                    )}
                   </div>
                 ):(
                   <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2,flexShrink:0}}>
@@ -3124,7 +3146,7 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
         </Card>
 
         {/* Botón principal completar */}
-        {user&&isActive(task)&&(task.responsible?.id===user.id||task.creator?.id===user.id||user.dept==="Dirección"||lastNodeCompleted)&&(
+        {user&&isActive(task)&&lastNodeCompleted&&(
           <button onClick={()=>onUpdate(taskId,{status:"Completada",completedAt:new Date().toISOString()})}
             style={{width:"100%",background:"#059669",color:"#fff",border:"none",padding:"16px",borderRadius:12,fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:16,display:"flex",alignItems:"center",justifyContent:"center",gap:10,boxShadow:"0 4px 14px rgba(5,150,105,.35)",transition:"all .15s"}}
             onMouseEnter={e=>{e.currentTarget.style.background="#047857";e.currentTarget.style.transform="translateY(-1px)";}}
@@ -3153,20 +3175,6 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
 
         <div style={{display:isMobile?"flex":"grid",flexDirection:isMobile?"column":undefined,gridTemplateColumns:isMobile?undefined:"1fr 260px",gap:16}}>
           <div style={{display:"flex",flexDirection:"column",gap:16}}>
-            {/* Status */}
-            {canEdit&&(
-              <Card sx={{padding:18}}>
-                <Lbl ch="CAMBIAR ESTADO"/>
-                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                  {Object.entries(SC).filter(([s])=>s!=="Bloqueada"&&s!=="Cancelada").map(([s,c])=>(
-                    <button key={s} onClick={()=>{onUpdate(taskId,{status:s});}}
-                      style={{background:task.status===s?c.c:CARD,color:task.status===s?"#fff":c.c,border:`1.5px solid ${c.c}`,padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600,transition:"all .12s"}}>
-                      {s}
-                    </button>
-                  ))}
-                </div>
-              </Card>
-            )}
             {/* Mobile: Responsable + FechaLimite above flow */}
             {isMobile&&task.responsible&&<Card sx={{padding:16}}><Lbl ch="RESPONSABLE"/><div style={{display:"flex",alignItems:"center",gap:10}}><Av u={task.responsible} size={36}/><div><div style={{fontSize:13,fontWeight:600,color:T1}}>{task.responsible.name}</div><div style={{fontSize:11,color:T2}}>{task.responsible.dept}</div></div></div></Card>}
             {isMobile&&<Card sx={{padding:16}}><Lbl ch="FECHA LÍMITE"/><div style={{fontSize:15,fontWeight:700,color:dl.c}}>{dl.label}</div><div style={{fontSize:11,color:T3,marginTop:2}}>{task.deadline}</div></Card>}
@@ -3190,7 +3198,13 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
                     prevState:prev,newState:newSt,
                     time:_n.toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"})+" "+_n.toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"}),
                   };
-                  onUpdate(taskId,{flowStates:{...flowStates,[sid]:newSt},flowLog:[...(task.flowLog||[]),entry]});
+                  // Auto-activar tarea cuando el primer nodo pasa a "En proceso"
+                  const isFirstNode=idx===0;
+                  const updatePayload={flowStates:{...flowStates,[sid]:newSt},flowLog:[...(task.flowLog||[]),entry]};
+                  if(isFirstNode&&newSt==="En proceso"&&task.status==="Pendiente"){
+                    updatePayload.status="En proceso";
+                  }
+                  onUpdate(taskId,updatePayload);
                 }}
                 canReorder={canReorder} canChangeState={canChangeState}
                 myInvIndex={myInvIndex}
