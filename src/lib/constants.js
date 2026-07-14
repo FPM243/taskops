@@ -41,6 +41,7 @@ export const USERS = [
   {id:17, name:"Cobranza",                   email:"cobranzas@fpm.com.mx",       ini:"CB",  dept:"Finanzas",                     phone:"528120747829"},
   {id:18, name:"Investigación y Desarrollo", email:"laboratorio@fpm.com.mx",     ini:"JL",  dept:"Investigación y Desarrollo",   phone:"528110665019"},
   {id:19, name:"Recepción",                  email:"recepcion@fpm.com.mx",       ini:"RC",  dept:"Recepción",                    phone:"528126586174"},
+  {id:20, name:"Aux. Ingeniería",            email:"proyectos@fpm.com.mx",       ini:"AI",  dept:"Ingenieria",                   phone:"528115360837"},
 ];
 USERS.forEach(u => { u.uc = DEPT_COLORS[u.dept]; });
 
@@ -50,7 +51,7 @@ export const USERS_BY_DEPT = DEPTS.map(dept=>({dept,users:USERS.filter(u=>u.dept
 // ids que cada departamento puede seleccionar como responsable
 export const ASSIGN_MATRIX = {
   "Dirección":  null,        // null = todos
-  "Ingenieria": [9],         // SMT
+  "Ingenieria": [9, 20],     // SMT, Aux. Ingeniería
   "Calidad":    [8, 11, 12], // Mantenimiento, Auxiliar calidad, Inspector calidad
   "Producción":  [13, 14, 15],// Supervisores V, N, E
   "Logistica/IT":[16],        // Almacén
