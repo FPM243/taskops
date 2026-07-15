@@ -250,6 +250,83 @@ serve(async (req) => {
         );
         break;
 
+      case "quick_task_created":
+        subject = `⚡ Nueva tarea rápida: ${data.taskTitle}`;
+        html = `
+        <!DOCTYPE html>
+        <html>
+        <head><meta charset="utf-8"></head>
+        <body style="font-family:'Segoe UI',Arial,sans-serif;background:#F0F4FF;margin:0;padding:24px;">
+          <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);">
+            <div style="background:#7C3AED;padding:20px 28px;display:flex;align-items:center;gap:12px;">
+              <span style="color:#fff;font-size:22px;font-weight:800;letter-spacing:1px;">NEXUS</span>
+              <span style="color:#DDD6FE;font-size:12px;">| Fine Pitch de México</span>
+            </div>
+            <div style="padding:28px;">
+              <h2 style="color:#1E1B4B;font-size:18px;margin:0 0 12px;">⚡ Nueva tarea rápida asignada</h2>
+              <div style="color:#64748B;font-size:14px;line-height:1.7;">
+                <p>Hola <strong>${data.userName}</strong>,</p>
+                <p>Se creó una nueva tarea rápida para <strong>${data.dept}</strong>:</p>
+                <div style="background:#F5F3FF;border-left:4px solid #7C3AED;padding:14px 16px;border-radius:6px;margin:16px 0;">
+                  <div style="font-weight:700;color:#1E1B4B;font-size:15px;margin-bottom:8px;">${data.taskTitle}</div>
+                  <div style="color:#64748B;font-size:13px;line-height:1.6;">${data.taskDescription}</div>
+                </div>
+                <table style="width:100%;border-collapse:collapse;margin:12px 0;">
+                  <tr><td style="padding:6px 0;color:#94A3B8;font-size:12px;width:120px;">DEPARTAMENTO</td><td style="padding:6px 0;font-weight:600;color:#1E1B4B;">${data.dept}</td></tr>
+                  <tr><td style="padding:6px 0;color:#94A3B8;font-size:12px;">PRIORIDAD</td><td style="padding:6px 0;color:#64748B;">${data.priority}</td></tr>
+                  <tr><td style="padding:6px 0;color:#94A3B8;font-size:12px;">FECHA LÍMITE</td><td style="padding:6px 0;color:#64748B;">${data.deadline}</td></tr>
+                  <tr><td style="padding:6px 0;color:#94A3B8;font-size:12px;">CREADA POR</td><td style="padding:6px 0;color:#64748B;">${data.creatorName}</td></tr>
+                </table>
+              </div>
+              <a href="https://taskops-kappa.vercel.app/?quickTask=${data.taskId}"
+                style="display:inline-block;margin-top:20px;background:#7C3AED;color:#fff;padding:10px 22px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600;">
+                Ver tarea rápida →
+              </a>
+            </div>
+            <div style="background:#F8FAFF;padding:14px 28px;border-top:1px solid #E2E8F0;">
+              <p style="color:#94A3B8;font-size:11px;margin:0;">Este es un mensaje automático de NEXUS. No respondas a este correo.</p>
+            </div>
+          </div>
+        </body>
+        </html>`;
+        break;
+
+      case "quick_task_comment":
+        subject = `💬 Comentario en tarea rápida: ${data.taskTitle}`;
+        html = `
+        <!DOCTYPE html>
+        <html>
+        <head><meta charset="utf-8"></head>
+        <body style="font-family:'Segoe UI',Arial,sans-serif;background:#F0F4FF;margin:0;padding:24px;">
+          <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);">
+            <div style="background:#7C3AED;padding:20px 28px;display:flex;align-items:center;gap:12px;">
+              <span style="color:#fff;font-size:22px;font-weight:800;letter-spacing:1px;">NEXUS</span>
+              <span style="color:#DDD6FE;font-size:12px;">| Fine Pitch de México</span>
+            </div>
+            <div style="padding:28px;">
+              <h2 style="color:#1E1B4B;font-size:18px;margin:0 0 12px;">💬 Nuevo comentario en tarea rápida</h2>
+              <div style="color:#64748B;font-size:14px;line-height:1.7;">
+                <p>Hola <strong>${data.userName}</strong>,</p>
+                <p><strong>${data.commenterName}</strong> comentó en la siguiente tarea rápida:</p>
+                <div style="background:#F5F3FF;border-left:4px solid #7C3AED;padding:14px 16px;border-radius:6px;margin:16px 0;">
+                  <div style="font-weight:700;color:#1E1B4B;font-size:15px;margin-bottom:8px;">${data.taskTitle}</div>
+                  <div style="color:#94A3B8;font-size:12px;margin-bottom:8px;">${data.dept}</div>
+                  <div style="background:#fff;border:1px solid #E9D5FF;border-radius:6px;padding:10px;color:#64748B;font-size:13px;line-height:1.6;">"${data.commentText}"</div>
+                </div>
+              </div>
+              <a href="https://taskops-kappa.vercel.app/?quickTask=${data.taskId}"
+                style="display:inline-block;margin-top:20px;background:#7C3AED;color:#fff;padding:10px 22px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600;">
+                Ver tarea rápida →
+              </a>
+            </div>
+            <div style="background:#F8FAFF;padding:14px 28px;border-top:1px solid #E2E8F0;">
+              <p style="color:#94A3B8;font-size:11px;margin:0;">Este es un mensaje automático de NEXUS. No respondas a este correo.</p>
+            </div>
+          </div>
+        </body>
+        </html>`;
+        break;
+
       default:
         return new Response(JSON.stringify({ error: "Unknown type" }), { status: 400 });
     }

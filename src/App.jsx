@@ -2470,6 +2470,35 @@ function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDe
       iso:now.toISOString()
     };
     onUpdateTask(selectedTask.id,{comments:[...(selectedTask.comments||[]),c]});
+
+    // Notificar a: creador + Dirección + todos del depto + comentaristas previos (deduplicados, excepto autor)
+    const commentUserIds=(selectedTask.comments||[]).map(cm=>cm.user?.id).filter(Boolean);
+    const deptUsers=USERS.filter(u=>u.dept===selectedTask.dept).map(u=>u.id);
+    const direccionUsers=USERS.filter(u=>u.dept==="Dirección").map(u=>u.id);
+    const recipientIds=[...new Set([
+      selectedTask.createdBy?.id,
+      ...deptUsers,
+      ...direccionUsers,
+      ...commentUserIds
+    ].filter(Boolean))].filter(id=>id!==user.id);
+
+    const commentPreview=`${commentText.trim().slice(0,80)}${commentText.trim().length>80?"…":""}`;
+    if(recipientIds.length>0){
+      sendPushNotification(recipientIds,`💬 Comentario en tarea rápida: ${selectedTask.title}`,`${user.name}: ${commentPreview}`,`/?quickTask=${selectedTask.id}`);
+      recipientIds.forEach(id=>{
+        const u=USERS.find(x=>x.id===id);
+        if(!u?.email) return;
+        setTimeout(()=>sendEmailNotification("quick_task_comment",[u.email],{
+          userName:u.name,
+          taskId:selectedTask.id,
+          taskTitle:selectedTask.title,
+          commenterName:user.name,
+          commentText:commentPreview,
+          dept:selectedTask.dept,
+        }),0);
+      });
+    }
+
     setCommentText("");
   };
 
@@ -4341,7 +4370,7 @@ function ScreenDeletedTasks({deletedTasks,user,onBack}){
 /* ════════════════════════════════════════
    SCREEN: NOTIFICACIONES
 ════════════════════════════════════════ */
-function ScreenNotificaciones({tasks,avisos,user,onBack,onTaskClick,onAvisoClick,lastNotifView}){
+function ScreenNotificaciones({tasks,avisos,quickTasks,user,onBack,onTaskClick,onAvisoClick,onQuickTaskClick,lastNotifView}){
   const isMobile=useIsMobile();
 
   const items=useMemo(()=>{
@@ -4395,8 +4424,42 @@ function ScreenNotificaciones({tasks,avisos,user,onBack,onTaskClick,onAvisoClick
       }
     });
 
+    // Tareas rápidas creadas donde el usuario sea del depto destinatario, creador, o Dirección
+    (quickTasks||[]).forEach(qt=>{
+      const isDireccion=user.dept==="Dirección";
+      const isDeptUser=qt.dept===user.dept;
+      const isCreator=qt.createdBy?.id===user.id;
+      if((isDeptUser||isDireccion)&&!isCreator&&!qt.deleted){
+        list.push({
+          type:"quick_task_created",icon:"⚡",
+          title:`Tarea rápida asignada: ${qt.title}`,
+          body:`${qt.dept} · ${qt.description||"Sin descripción"}`,
+          date:qt.createdAt,
+          quickTask:qt,
+          color:"#7C3AED",bg:"#F5F3FF",
+        });
+      }
+      // Comentarios en tareas rápidas donde el usuario sea destinatario
+      const commentUserIds=(qt.comments||[]).map(cm=>cm.user?.id).filter(Boolean);
+      const isQTRecipient=qt.createdBy?.id===user.id||qt.dept===user.dept||user.dept==="Dirección"||commentUserIds.includes(user.id);
+      if(isQTRecipient){
+        (qt.comments||[]).forEach(c=>{
+          if(c.user?.id!==user.id){
+            list.push({
+              type:"quick_task_comment",icon:"💬",
+              title:`Comentario en tarea rápida: ${qt.title}`,
+              body:`${c.user?.name||"—"}: ${c.text}`,
+              date:c.iso,
+              quickTask:qt,
+              color:"#7C3AED",bg:"#F5F3FF",
+            });
+          }
+        });
+      }
+    });
+
     return list.filter(x=>x.date).sort((a,b)=>new Date(b.date)-new Date(a.date));
-  },[tasks,avisos,user]);
+  },[tasks,avisos,quickTasks,user]);
 
   const sinceDate=lastNotifView?new Date(lastNotifView):new Date(0);
 
@@ -4418,9 +4481,9 @@ function ScreenNotificaciones({tasks,avisos,user,onBack,onTaskClick,onAvisoClick
           const isNew=new Date(item.date)>sinceDate;
           const bgColor=isNew?"#FFFDF0":CARD;
           return(
-          <div key={i} onClick={item.task?()=>onTaskClick(item.task):item.aviso?()=>onAvisoClick(item.aviso):undefined}
-            style={{display:"flex",gap:12,alignItems:"flex-start",background:bgColor,border:`1px solid ${BD}`,borderLeft:`3px solid ${item.color}`,borderRadius:12,padding:"14px 16px",marginBottom:10,cursor:(item.task||item.aviso)?"pointer":"default",transition:"box-shadow .12s"}}
-            onMouseEnter={e=>{if(item.task||item.aviso)e.currentTarget.style.boxShadow=SH;}}
+          <div key={i} onClick={item.task?()=>onTaskClick(item.task):item.aviso?()=>onAvisoClick(item.aviso):item.quickTask?()=>onQuickTaskClick(item.quickTask):undefined}
+            style={{display:"flex",gap:12,alignItems:"flex-start",background:bgColor,border:`1px solid ${BD}`,borderLeft:`3px solid ${item.color}`,borderRadius:12,padding:"14px 16px",marginBottom:10,cursor:(item.task||item.aviso||item.quickTask)?"pointer":"default",transition:"box-shadow .12s"}}
+            onMouseEnter={e=>{if(item.task||item.aviso||item.quickTask)e.currentTarget.style.boxShadow=SH;}}
             onMouseLeave={e=>{e.currentTarget.style.boxShadow="none";}}>
             <div style={{width:36,height:36,borderRadius:10,background:item.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{item.icon}</div>
             <div style={{flex:1,minWidth:0}}>
@@ -5151,6 +5214,28 @@ export default function App(){
       setQuickTasks(p=>p.filter(t=>t.id!==qt.id));
     }else{
       console.log("[Supabase] INSERT quick_task ok:",qt.id);
+      // Notificar a todos del departamento destinatario + Dirección (si creador NO es de Dirección)
+      const deptUsers=USERS.filter(u=>u.dept===qt.dept&&u.id!==user.id);
+      const direccionUsers=user.dept!=="Dirección"?USERS.filter(u=>u.dept==="Dirección"&&u.id!==user.id):[];
+      const allRecipients=[...deptUsers,...direccionUsers];
+      const notifyIds=[...new Set(allRecipients.map(u=>u.id))];
+      if(notifyIds.length>0){
+        sendPushNotification(notifyIds,`⚡ Nueva tarea rápida: ${qt.title}`,`Asignada a ${qt.dept}`,`/?quickTask=${qt.id}`);
+        allRecipients.forEach(u=>{
+          if(u.email){
+            setTimeout(()=>sendEmailNotification("quick_task_created",[u.email],{
+              userName:u.name,
+              taskId:qt.id,
+              taskTitle:qt.title,
+              taskDescription:qt.description||"Sin descripción",
+              dept:qt.dept,
+              priority:{1:"Alta",2:"Media",3:"Baja"}[qt.priority]||"—",
+              creatorName:user.name,
+              deadline:qt.deadline?new Date(qt.deadline).toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"}):"Sin fecha",
+            }),0);
+          }
+        });
+      }
     }
   };
 
@@ -5228,8 +5313,23 @@ export default function App(){
       const isRecipient=avisoIncludesUser(a,user.id)||a.origen?.id===user.id;
       if(isRecipient)(a.comments||[]).forEach(c=>{if(c.authorId!==user.id&&new Date(c.iso||0)>since)n++;});
     });
+    // Tareas rápidas: contar nuevas donde el usuario sea del depto destinatario, creador, o Dirección
+    quickTasks.forEach(qt=>{
+      const isDireccion=user.dept==="Dirección";
+      const isDeptUser=qt.dept===user.dept;
+      const isCreator=qt.createdBy?.id===user.id;
+      if((isDeptUser||isDireccion)&&!isCreator&&!qt.deleted){
+        if(new Date(qt.createdAt||0)>since)n++;
+      }
+      // Comentarios en tareas rápidas donde el usuario sea destinatario según reglas
+      const commentUserIds=(qt.comments||[]).map(cm=>cm.user?.id).filter(Boolean);
+      const isQTRecipient=qt.createdBy?.id===user.id||qt.dept===user.dept||user.dept==="Dirección"||commentUserIds.includes(user.id);
+      if(isQTRecipient){
+        (qt.comments||[]).forEach(c=>{if(c.user?.id!==user.id&&new Date(c.iso||0)>since)n++;});
+      }
+    });
     return n;
-  },[tasks,avisos,user,lastNotifView]);
+  },[tasks,avisos,quickTasks,user,lastNotifView]);
   const goTask=(t,from)=>{setSelTask(t);setFromScr(from||screen);setScreen("task");};
   const userIsAuthed = user && authedDepts.includes(user.dept);
   const canAddInDept=dept=>{if(!user)return false;if(user.dept==="Dirección")return true;if(user.dept===dept)return true;return authedDepts.includes(dept);};
@@ -5304,7 +5404,7 @@ export default function App(){
 
   if(screen==="avisos"&&user) return <><style>{CSS}</style><ScreenAviso user={user} avisos={avisos} onSend={sendAviso} onMarkRead={markAvisoRead} onUpdateAviso={updateAviso} onDeleteAviso={deleteAviso} onBack={()=>{setSelAviso(null);setScreen("dash");}} initialSelected={selAviso}/></>;
 
-  if(screen==="notif"&&user) return <><style>{CSS}</style><ScreenNotificaciones tasks={tasks} avisos={avisos} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"notif")} onAvisoClick={a=>{setSelAviso(a);setScreen("avisos");}} lastNotifView={lastNotifView}/></>;
+  if(screen==="notif"&&user) return <><style>{CSS}</style><ScreenNotificaciones tasks={tasks} avisos={avisos} quickTasks={quickTasks} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"notif")} onAvisoClick={a=>{setSelAviso(a);setScreen("avisos");}} onQuickTaskClick={qt=>setScreen("quickTasks")} lastNotifView={lastNotifView}/></>;
 
   if(screen==="ausencias") return <><style>{CSS}</style><ScreenAusencias user={user} ausencias={ausencias} onBack={()=>setScreen("dash")} cargarAusencias={cargarAusencias}/></>;
 
