@@ -2462,6 +2462,7 @@ function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDe
 
   const handleSendComment=()=>{
     if(!commentText.trim()) return;
+    console.log("[QuickTask Comment] iniciando", { taskId: selectedTask.id, commentText });
     const now=new Date();
     const c={
       user:{id:user.id,name:user.name},
@@ -2481,21 +2482,42 @@ function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDe
       ...direccionUsers,
       ...commentUserIds
     ].filter(Boolean))].filter(id=>id!==user.id);
+    const recipientEmails=recipientIds.map(id=>USERS.find(x=>x.id===id)?.email).filter(Boolean);
+
+    console.log("[QuickTask Comment] destinatarios calculados", {
+      recipientIds,
+      recipientEmails,
+      count: recipientIds.length
+    });
 
     const commentPreview=`${commentText.trim().slice(0,80)}${commentText.trim().length>80?"…":""}`;
     if(recipientIds.length>0){
-      sendPushNotification(recipientIds,`💬 Comentario en tarea rápida: ${selectedTask.title}`,`${user.name}: ${commentPreview}`,`/?quickTask=${selectedTask.id}`);
+      (async()=>{
+        try{
+          await sendPushNotification(recipientIds,`💬 Comentario en tarea rápida: ${selectedTask.title}`,`${user.name}: ${commentPreview}`,`/?quickTask=${selectedTask.id}`);
+          console.log("[QuickTask Comment] push OK a",recipientIds);
+        }catch(e){
+          console.error("[QuickTask Comment] push FAIL",recipientIds,e);
+        }
+      })();
       recipientIds.forEach(id=>{
         const u=USERS.find(x=>x.id===id);
         if(!u?.email) return;
-        setTimeout(()=>sendEmailNotification("quick_task_comment",[u.email],{
-          userName:u.name,
-          taskId:selectedTask.id,
-          taskTitle:selectedTask.title,
-          commenterName:user.name,
-          commentText:commentPreview,
-          dept:selectedTask.dept,
-        }),0);
+        setTimeout(async()=>{
+          try{
+            await sendEmailNotification("quick_task_comment",[u.email],{
+              userName:u.name,
+              taskId:selectedTask.id,
+              taskTitle:selectedTask.title,
+              commenterName:user.name,
+              commentText:commentPreview,
+              dept:selectedTask.dept,
+            });
+            console.log("[QuickTask Comment] email OK a",u.email);
+          }catch(e){
+            console.error("[QuickTask Comment] email FAIL",u.email,e);
+          }
+        },0);
       });
     }
 
@@ -5189,6 +5211,7 @@ export default function App(){
   // OPERACIONES CRUD: QUICK TASKS
   // ════════════════════════════════════════
   const createQuickTask=async data=>{
+    console.log("[QuickTask Create] iniciando", { title: data.title, dept: data.dept, priority: data.priority });
     const now=new Date();
     const qt={
       id:`QT-${now.getTime()}`,
@@ -5219,20 +5242,40 @@ export default function App(){
       const direccionUsers=user.dept!=="Dirección"?USERS.filter(u=>u.dept==="Dirección"&&u.id!==user.id):[];
       const allRecipients=[...deptUsers,...direccionUsers];
       const notifyIds=[...new Set(allRecipients.map(u=>u.id))];
+      const recipientEmails=allRecipients.filter(u=>u.email).map(u=>u.email);
+      console.log("[QuickTask Create] destinatarios calculados", {
+        recipientIds: notifyIds,
+        recipientEmails,
+        count: notifyIds.length
+      });
       if(notifyIds.length>0){
-        sendPushNotification(notifyIds,`⚡ Nueva tarea rápida: ${qt.title}`,`Asignada a ${qt.dept}`,`/?quickTask=${qt.id}`);
+        (async()=>{
+          try{
+            await sendPushNotification(notifyIds,`⚡ Nueva tarea rápida: ${qt.title}`,`Asignada a ${qt.dept}`,`/?quickTask=${qt.id}`);
+            console.log("[QuickTask Create] push OK a",notifyIds);
+          }catch(e){
+            console.error("[QuickTask Create] push FAIL",notifyIds,e);
+          }
+        })();
         allRecipients.forEach(u=>{
           if(u.email){
-            setTimeout(()=>sendEmailNotification("quick_task_created",[u.email],{
-              userName:u.name,
-              taskId:qt.id,
-              taskTitle:qt.title,
-              taskDescription:qt.description||"Sin descripción",
-              dept:qt.dept,
-              priority:{1:"Alta",2:"Media",3:"Baja"}[qt.priority]||"—",
-              creatorName:user.name,
-              deadline:qt.deadline?new Date(qt.deadline).toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"}):"Sin fecha",
-            }),0);
+            setTimeout(async()=>{
+              try{
+                await sendEmailNotification("quick_task_created",[u.email],{
+                  userName:u.name,
+                  taskId:qt.id,
+                  taskTitle:qt.title,
+                  taskDescription:qt.description||"Sin descripción",
+                  dept:qt.dept,
+                  priority:{1:"Alta",2:"Media",3:"Baja"}[qt.priority]||"—",
+                  creatorName:user.name,
+                  deadline:qt.deadline?new Date(qt.deadline).toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"}):"Sin fecha",
+                });
+                console.log("[QuickTask Create] email OK a",u.email);
+              }catch(e){
+                console.error("[QuickTask Create] email FAIL",u.email,e);
+              }
+            },0);
           }
         });
       }
