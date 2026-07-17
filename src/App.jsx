@@ -2847,6 +2847,14 @@ function QuickTaskForm({user,task,onSave,onCancel}){
 
   const isDireccion=user?.dept==="Dirección";
 
+  // Calcular destinatarios en tiempo real
+  const recipients=useMemo(()=>{
+    if(!dept) return [];
+    const deptUsers=USERS.filter(u=>u.dept===dept&&u.id!==user?.id);
+    const direccionUsers=user?.dept!=="Dirección"?USERS.filter(u=>u.dept==="Dirección"&&u.id!==user?.id):[];
+    return [...deptUsers,...direccionUsers];
+  },[dept,user]);
+
   const handleSave=()=>{
     if(!title.trim()){
       setError("El título es obligatorio");
@@ -2910,15 +2918,54 @@ function QuickTaskForm({user,task,onSave,onCancel}){
             </div>
           </div>
 
-          {/* Departamento */}
-          {isDireccion&&(
-            <div style={{marginBottom:16}}>
-              <label style={{fontSize:12,fontWeight:600,color:T2,marginBottom:6,display:"block"}}>Departamento *</label>
+          {/* Departamento - SIEMPRE VISIBLE */}
+          <div style={{marginBottom:16}}>
+            <label style={{fontSize:14,fontWeight:700,color:T1,marginBottom:8,display:"block"}}>Asignar a departamento: *</label>
+            {isDireccion?(
               <select value={dept} onChange={e=>setDept(e.target.value)}
-                style={{width:"100%",padding:10,borderRadius:8,border:`1px solid ${BD}`,fontSize:13,background:CARD,color:T1}}>
-                <option value="">Selecciona...</option>
+                style={{width:"100%",padding:12,borderRadius:8,border:`2px solid ${BD}`,fontSize:14,background:CARD,color:T1,fontWeight:600}}>
+                <option value="">Selecciona un departamento...</option>
                 {DEPTS.map(d=><option key={d} value={d}>{d}</option>)}
               </select>
+            ):(
+              <div style={{padding:12,background:"#EEF2FF",border:"2px solid #4338CA",borderRadius:8,fontSize:14,fontWeight:600,color:"#1E1B4B"}}>
+                {user?.dept||"—"}
+              </div>
+            )}
+          </div>
+
+          {/* Lista de destinatarios en tiempo real */}
+          {dept&&recipients.length>0&&(
+            <div style={{marginBottom:20,padding:16,background:"#F0F9FF",border:"2px solid #0EA5E9",borderRadius:8}}>
+              <div style={{fontSize:13,fontWeight:700,color:"#0C4A6E",marginBottom:10}}>
+                📋 Recibirán esta tarea ({recipients.length} {recipients.length===1?"persona":"personas"}):
+              </div>
+              <div style={{maxHeight:200,overflowY:"auto"}}>
+                {recipients.map(u=>(
+                  <div key={u.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:`1px solid #BAE6FD`}}>
+                    <div style={{width:28,height:28,borderRadius:"50%",background:"#0EA5E9",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,flexShrink:0}}>
+                      {u.ini||u.name?.charAt(0)||"?"}
+                    </div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:600,color:"#0C4A6E"}}>{u.name}</div>
+                      <div style={{fontSize:11,color:"#0369A1"}}>
+                        {u.email} • {u.dept}
+                        {u.dept==="Dirección"&&user?.dept!=="Dirección"&&<span style={{marginLeft:4,fontSize:10,background:"#FEF3C7",color:"#92400E",padding:"2px 6px",borderRadius:4,fontWeight:600}}>también notificado</span>}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div style={{marginTop:12,padding:10,background:"#DBEAFE",borderRadius:6,fontSize:11,color:"#075985",lineHeight:1.5}}>
+                ✓ Recibirán notificación por <strong>email y push</strong>
+              </div>
+            </div>
+          )}
+
+          {/* Advertencia si dept === user.dept */}
+          {dept&&dept===user?.dept&&(
+            <div style={{marginBottom:16,padding:12,background:"#FFFBEB",border:"2px solid #F59E0B",borderRadius:8,fontSize:12,color:"#92400E",lineHeight:1.6}}>
+              ⚠️ <strong>Esta tarea es para tu propio departamento.</strong> Tú y tus compañeros recibirán la notificación.
             </div>
           )}
 
