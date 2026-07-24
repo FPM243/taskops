@@ -19,6 +19,51 @@ import {
 // Funciones utilitarias movidas a src/lib/helpers.js
 
 /* ════════════════════════════════════════
+   HOOK: SCROLL RESTORE
+════════════════════════════════════════ */
+// Hook para restaurar posición de scroll al regresar a una lista.
+// Usa doble estrategia para compatibilidad con iOS PWA:
+// 1. requestAnimationFrame para intento inmediato
+// 2. setTimeout de 50ms como respaldo (iOS puede resetear scrollTop después del render)
+function useScrollRestore(screenName) {
+  const scrollRef = useRef(null);
+  const scrollPositions = useRef({});
+
+  // Guardar posición al desmontar
+  useEffect(() => {
+    return () => {
+      if (scrollRef.current) {
+        scrollPositions.current[screenName] = scrollRef.current.scrollTop;
+      }
+    };
+  }, [screenName]);
+
+  // Restaurar posición al montar (doble estrategia iOS)
+  useEffect(() => {
+    const savedPosition = scrollPositions.current[screenName];
+
+    // Solo restaurar si hay una posición guardada > 0
+    if (scrollRef.current && savedPosition && savedPosition > 0) {
+      // Intento 1: requestAnimationFrame (inmediato después del render)
+      requestAnimationFrame(() => {
+        if (scrollRef.current) {
+          scrollRef.current.scrollTop = savedPosition;
+        }
+      });
+
+      // Intento 2: setTimeout 50ms (respaldo para iOS PWA)
+      setTimeout(() => {
+        if (scrollRef.current && scrollRef.current.scrollTop !== savedPosition) {
+          scrollRef.current.scrollTop = savedPosition;
+        }
+      }, 50);
+    }
+  }, [screenName]);
+
+  return scrollRef;
+}
+
+/* ════════════════════════════════════════
    PUSH NOTIFICATIONS
 ════════════════════════════════════════ */
 
@@ -1107,6 +1152,7 @@ function FormularioAusencia({user,onClose,onSave,ausenciaEditar}){
    SCREEN: DASHBOARD
 ════════════════════════════════════════ */
 function ScreenDashboard({tasks,user,onStatClick,onDeptClick,onPickerDeptClick,onTaskClick,onNewTask,onSearch,onStats,onMyTasks,onCalendar,onDelays,onDeleted,onStuck,userIsAuthed,onRequestAuth,deptIsAuthed,dbConnected,onAvisos,unreadAvisos,isGuest,onLogin,onNotif,onLogout,unreadNotif,onAusencias,onQuickTasks,quickTasksCount,ausencias,cargarAusencias}){
+  const scrollRef=useScrollRestore("dashboard");
   const [pickerOpen,setPickerOpen]=useState(false);
   const [tab,setTab]=useState("active");
   const [detalleAusencia,setDetalleAusencia]=useState(null);
@@ -1143,7 +1189,7 @@ function ScreenDashboard({tasks,user,onStatClick,onDeptClick,onPickerDeptClick,o
   }),[tasks]);
 
   return(
-    <div style={{minHeight:"100vh",background:BG}}>
+    <div ref={scrollRef} style={{minHeight:"100vh",background:BG,overflowY:"auto"}}>
       <NavBar
         left={<Logo/>}
         center={null}
@@ -1353,6 +1399,7 @@ function ScreenDashboard({tasks,user,onStatClick,onDeptClick,onPickerDeptClick,o
    SCREEN: MIS TAREAS
 ════════════════════════════════════════ */
 function ScreenMyTasks({tasks,user,onBack,onTaskClick}){
+  const scrollRef=useScrollRestore("myTasks");
   const [tab,setTab]=useState("active");
   const isMobile=useIsMobile();
   const prioOrder={Alta:0,Media:1,Baja:2};
@@ -1368,7 +1415,7 @@ function ScreenMyTasks({tasks,user,onBack,onTaskClick}){
   const list=tab==="active"?activeTasks:doneTasks;
 
   return(
-    <div style={{minHeight:"100vh",background:BG}}>
+    <div ref={scrollRef} style={{minHeight:"100vh",background:BG,overflowY:"auto"}}>
       <NavBar
         left={<><BackBtn onClick={onBack}/><div>
           <div style={{fontWeight:700,fontSize:15,color:T1}}>Mis Tareas</div>
@@ -1435,6 +1482,7 @@ function ScreenFilteredList({tasks,filter,user,onBack,onTaskClick}){
    SCREEN: SEARCH
 ════════════════════════════════════════ */
 function ScreenSearch({tasks,user,onBack,onTaskClick,avisos,onAvisoClick}){
+  const scrollRef=useScrollRestore("search");
   const [q,setQ]=useState("");
   const taskResults=useMemo(()=>{
     if(!q.trim()) return [];
@@ -1449,7 +1497,7 @@ function ScreenSearch({tasks,user,onBack,onTaskClick,avisos,onAvisoClick}){
   const total=taskResults.length+avisoResults.length;
   const fmtFechaShort=f=>{const d=new Date(f);return d.toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"});};
   return(
-    <div style={{minHeight:"100vh",background:BG}}>
+    <div ref={scrollRef} style={{minHeight:"100vh",background:BG,overflowY:"auto"}}>
       <NavBar
         left={<><BackBtn onClick={onBack}/><Logo/></>}
         center={<input value={q} onChange={e=>setQ(e.target.value)} autoFocus placeholder="Buscar tareas o avisos..." style={{...inp,width:"min(400px,60vw)",borderRadius:20}}/>}
@@ -2389,6 +2437,7 @@ function ScreenDeptDetail({dept,tasks,user,onBack,onTaskClick,onNewTask,canAdd,o
    SCREEN: TAREAS RÁPIDAS
 ════════════════════════════════════════ */
 function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDeleteTask,onRestoreTask}){
+  const scrollRef=useScrollRestore("quickTasks");
   const [filter,setFilter]=useState("active"); // "active" | "all" | "pending" | "in_progress" | "completed" | "deleted"
   const [selectedTask,setSelectedTask]=useState(null);
   const [showCreateForm,setShowCreateForm]=useState(false);
@@ -2704,7 +2753,7 @@ function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDe
 
   // Vista principal: lista de tareas
   return(
-    <div style={{minHeight:"100vh",background:BG}}>
+    <div ref={scrollRef} style={{minHeight:"100vh",background:BG,overflowY:"auto"}}>
       <NavBar
         left={<button onClick={onBack} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:T1}}>←</button>}
         center={<span style={{fontSize:14,fontWeight:600,color:T1}}>⚡ Tareas Rápidas</span>}
@@ -3642,6 +3691,7 @@ function ScreenCreate({user,taskCount,onSave,onCancel,defaultDept,taskToEdit,sav
    SCREEN: AVISOS
 ════════════════════════════════════════ */
 function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onDeleteAviso,onBack,initialSelected}){
+  const scrollRef=useScrollRestore("avisos");
   const [tab,setTab]=useState("inbox");
   const [dests,setDests]=useState([]);
   const [texto,setTexto]=useState("");
@@ -4073,7 +4123,7 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onDeleteAviso,
   }
 
   return(
-    <div style={{minHeight:"100vh",background:BG}}>
+    <div ref={scrollRef} style={{minHeight:"100vh",background:BG,overflowY:"auto"}}>
       <NavBar
         left={<><BackBtn onClick={onBack}/><div>
           <div style={{fontWeight:700,fontSize:15,color:T1}}>Avisos</div>
@@ -4319,6 +4369,7 @@ function ScreenDelays({tasks,user,onBack,onTaskClick}){
    SCREEN: STUCK TASKS
 ════════════════════════════════════════ */
 function ScreenStuckTasks({tasks,user,onBack,onTaskClick}){
+  const scrollRef=useScrollRestore("stuckTasks");
   const stuckItems=useMemo(()=>{
     const result=[];
     tasks.forEach(t=>{
@@ -4356,7 +4407,7 @@ function ScreenStuckTasks({tasks,user,onBack,onTaskClick}){
   };
 
   return(
-    <div style={{minHeight:"100vh",background:BG}}>
+    <div ref={scrollRef} style={{minHeight:"100vh",background:BG,overflowY:"auto"}}>
       <NavBar
         left={<><BackBtn onClick={onBack}/><div>
           <div style={{fontWeight:700,fontSize:15,color:T1}}>Tareas estancadas</div>
@@ -4472,6 +4523,7 @@ function ScreenDeletedTasks({deletedTasks,user,onBack}){
    SCREEN: NOTIFICACIONES
 ════════════════════════════════════════ */
 function ScreenNotificaciones({tasks,avisos,quickTasks,user,onBack,onTaskClick,onAvisoClick,onQuickTaskClick,lastNotifView}){
+  const scrollRef=useScrollRestore("notificaciones");
   const isMobile=useIsMobile();
 
   const items=useMemo(()=>{
@@ -4567,7 +4619,7 @@ function ScreenNotificaciones({tasks,avisos,quickTasks,user,onBack,onTaskClick,o
   const fmtFecha=d=>new Date(d).toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"})+" "+new Date(d).toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"});
 
   return(
-    <div style={{minHeight:"100vh",background:BG}}>
+    <div ref={scrollRef} style={{minHeight:"100vh",background:BG,overflowY:"auto"}}>
       <NavBar
         left={<><BackBtn onClick={onBack}/><div>
           <div style={{fontWeight:700,fontSize:15,color:T1}}>Notificaciones</div>
