@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect, useCallback, Fragment } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback, Fragment, createContext, useContext } from "react";
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import supabase, { SUPABASE_URL, SUPABASE_ANON_KEY } from "./supabase";
 import {
@@ -17,6 +17,15 @@ import {
 } from "./lib/helpers";
 
 // Funciones utilitarias movidas a src/lib/helpers.js
+
+/* ════════════════════════════════════════
+   REALTIME CONTEXT
+════════════════════════════════════════ */
+// Context para compartir el estado de conexión Realtime en toda la app
+const RealtimeContext = createContext({
+  status: "connecting",
+  lastSyncTime: Date.now()
+});
 
 /* ════════════════════════════════════════
    HOOK: SCROLL RESTORE
@@ -298,12 +307,13 @@ function RealtimeStatus({status,lastSyncTime}){
   );
 }
 
-function NavBar({left,center,right,realtimeStatus}){
+function NavBar({left,center,right}){
+  const realtimeStatus=useContext(RealtimeContext);
   return <div style={{background:CARD,borderBottom:`1px solid ${BD}`,padding:"0 20px",display:"flex",alignItems:"center",justifyContent:"space-between",height:60,position:"sticky",top:0,zIndex:50,boxShadow:"0 1px 4px rgba(15,23,42,.06)"}}>
     <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>{left}</div>
     <div style={{display:"flex",alignItems:"center",gap:8,flex:1,justifyContent:"center",flexWrap:"wrap"}}>{center}</div>
     <div style={{display:"flex",alignItems:"center",gap:12,position:"relative",flexShrink:0}}>
-      {realtimeStatus&&<RealtimeStatus status={realtimeStatus.status} lastSyncTime={realtimeStatus.lastSyncTime}/>}
+      <RealtimeStatus status={realtimeStatus.status} lastSyncTime={realtimeStatus.lastSyncTime}/>
       {right}
     </div>
   </div>;
@@ -1228,8 +1238,7 @@ function ScreenDashboard({tasks,user,onStatClick,onDeptClick,onPickerDeptClick,o
 
   return(
     <div ref={scrollRef} style={{minHeight:"100vh",background:BG,overflowY:"auto"}}>
-      <NavBar
-        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<Logo/>}
+      <NavBar left={<Logo/>}
         center={null}
         right={<>
           <button onClick={()=>setPickerOpen(p=>!p)}
@@ -1454,8 +1463,7 @@ function ScreenMyTasks({tasks,user,onBack,onTaskClick}){
 
   return(
     <div ref={scrollRef} style={{minHeight:"100vh",background:BG,overflowY:"auto"}}>
-      <NavBar
-        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onBack}/><div>
+      <NavBar left={<><BackBtn onClick={onBack}/><div>
           <div style={{fontWeight:700,fontSize:15,color:T1}}>Mis Tareas</div>
           <div style={{fontSize:11,color:T2}}>{user.name} · {user.dept}</div>
         </div></>}
@@ -1507,7 +1515,7 @@ function ScreenFilteredList({tasks,filter,user,onBack,onTaskClick}){
   const list=useMemo(()=>[...tasks.filter(cfg.fn)].sort((a,b)=>({Alta:0,Media:1,Baja:2}[a.priority]||1)-({Alta:0,Media:1,Baja:2}[b.priority]||1)),[tasks,filter]);
   return(
     <div style={{minHeight:"100vh",background:BG}}>
-      <NavBar realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onBack}/><div><div style={{fontWeight:700,fontSize:15,color:T1}}>{cfg.label}</div><div style={{fontSize:11,color:T2}}>{list.length} tarea{list.length!==1?"s":""}</div></div></>} center={null} right={null}/>
+      <NavBar left={<><BackBtn onClick={onBack}/><div><div style={{fontWeight:700,fontSize:15,color:T1}}>{cfg.label}</div><div style={{fontSize:11,color:T2}}>{list.length} tarea{list.length!==1?"s":""}</div></div></>} center={null} right={null}/>
       <div style={{maxWidth:900,margin:"0 auto",padding:"24px"}}>
         {list.length===0&&<div style={{textAlign:"center",padding:"60px 0",color:T3,fontSize:14}}>No hay tareas con este filtro</div>}
         {list.map(t=><TRow key={t.id} t={t} onClick={()=>onTaskClick(t)}/>)}
@@ -1536,8 +1544,7 @@ function ScreenSearch({tasks,user,onBack,onTaskClick,avisos,onAvisoClick}){
   const fmtFechaShort=f=>{const d=new Date(f);return d.toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"});};
   return(
     <div ref={scrollRef} style={{minHeight:"100vh",background:BG,overflowY:"auto"}}>
-      <NavBar
-        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onBack}/><Logo/></>}
+      <NavBar left={<><BackBtn onClick={onBack}/><Logo/></>}
         center={<input value={q} onChange={e=>setQ(e.target.value)} autoFocus placeholder="Buscar tareas o avisos..." style={{...inp,width:"min(400px,60vw)",borderRadius:20}}/>}
         right={null}
       />
@@ -1610,8 +1617,7 @@ function ScreenAusencias({user,ausencias,onBack,cargarAusencias}){
 
   return(
     <div style={{minHeight:"100vh",background:BG}}>
-      <NavBar
-        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onBack}/><div style={{fontWeight:700,fontSize:15,color:T1}}>Ausencias</div></>}
+      <NavBar left={<><BackBtn onClick={onBack}/><div style={{fontWeight:700,fontSize:15,color:T1}}>Ausencias</div></>}
         center={null}
         right={<div style={{display:"flex",gap:8,alignItems:"center"}}>
           <button onClick={()=>setVistaActual("semanal")}
@@ -2001,8 +2007,7 @@ function ScreenCalendar({tasks,user,onBack,onTaskClick}){
 
   return(
     <div style={{minHeight:"100vh",background:BG}}>
-      <NavBar
-        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onBack}/><div><div style={{fontWeight:700,fontSize:15,color:T1}}>Calendario</div><div style={{fontSize:11,color:T2}}>{MONTHS_ES[month]} {year}</div></div></>}
+      <NavBar left={<><BackBtn onClick={onBack}/><div><div style={{fontWeight:700,fontSize:15,color:T1}}>Calendario</div><div style={{fontSize:11,color:T2}}>{MONTHS_ES[month]} {year}</div></div></>}
         center={null}
         right={<div style={{display:"flex",gap:8,alignItems:"center"}}>
           <button onClick={prevMonth} className="nb" style={{padding:"6px 10px"}}>←</button>
@@ -2173,8 +2178,7 @@ function ScreenStats({tasks,user,onBack}){
 
   return(
     <div style={{minHeight:"100vh",background:BG}}>
-      <NavBar
-        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onBack}/><div><div style={{fontWeight:700,fontSize:15,color:T1}}>Estadísticas</div><div style={{fontSize:11,color:T2}}>{tasks.length} tareas en total</div></div></>}
+      <NavBar left={<><BackBtn onClick={onBack}/><div><div style={{fontWeight:700,fontSize:15,color:T1}}>Estadísticas</div><div style={{fontSize:11,color:T2}}>{tasks.length} tareas en total</div></div></>}
         center={null}
         right={<button onClick={exportCSV} style={{background:"#ECFDF5",border:"1px solid #A7F3D0",color:"#059669",padding:"7px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600}}>⬇ Exportar CSV</button>}
       />
@@ -2406,8 +2410,7 @@ function ScreenDeptDetail({dept,tasks,user,onBack,onTaskClick,onNewTask,canAdd,o
   const FILTERS=[["all","Todas"],["Alta","Alta prio."],["Bloqueada","Bloqueadas"],["En proceso","En proceso"],["Pendiente","Pendientes"]];
   return(
     <div style={{minHeight:"100vh",background:BG}}>
-      <NavBar
-        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onBack}/><div>
+      <NavBar left={<><BackBtn onClick={onBack}/><div>
           <div style={{fontWeight:700,fontSize:15,color:T1,display:"flex",alignItems:"center",gap:8}}><div style={{width:9,height:9,borderRadius:"50%",background:dc(dept)}}/>{dept}</div>
           <div style={{fontSize:11,color:T2}}>{deptTasks.length} tarea{deptTasks.length!==1?"s":""} activa{deptTasks.length!==1?"s":""}</div>
         </div></>}
@@ -2647,8 +2650,7 @@ function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDe
   if(selectedTask){
     return(
       <div style={{minHeight:"100vh",background:BG}}>
-        <NavBar
-          realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<button onClick={()=>setSelectedTask(null)} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:T1}}>←</button>}
+        <NavBar left={<button onClick={()=>setSelectedTask(null)} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:T1}}>←</button>}
           center={<span style={{fontSize:14,fontWeight:600,color:T1}}>Detalle de tarea rápida</span>}
           right={null}
         />
@@ -2792,8 +2794,7 @@ function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDe
   // Vista principal: lista de tareas
   return(
     <div ref={scrollRef} style={{minHeight:"100vh",background:BG,overflowY:"auto"}}>
-      <NavBar
-        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<button onClick={onBack} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:T1}}>←</button>}
+      <NavBar left={<button onClick={onBack} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:T1}}>←</button>}
         center={<span style={{fontSize:14,fontWeight:600,color:T1}}>⚡ Tareas Rápidas</span>}
         right={<button onClick={()=>setShowCreateForm(true)}
           style={{background:PR,color:"#fff",border:"none",padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>
@@ -2996,8 +2997,7 @@ function QuickTaskForm({user,task,onSave,onCancel}){
 
   return(
     <div style={{minHeight:"100vh",background:BG}}>
-      <NavBar
-        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<button onClick={onCancel} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:T1}}>←</button>}
+      <NavBar left={<button onClick={onCancel} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:T1}}>←</button>}
         center={<span style={{fontSize:14,fontWeight:600,color:T1}}>{task?"Editar tarea":"Nueva tarea rápida"}</span>}
         right={null}
       />
@@ -3238,8 +3238,7 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
 
   return(
     <div style={{minHeight:"100vh",background:BG}}>
-      <NavBar
-        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onBack}/><div>
+      <NavBar left={<><BackBtn onClick={onBack}/><div>
           <div style={{fontWeight:700,fontSize:14,color:T1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:260}}>{task.title}</div>
           <div style={{fontSize:11,color:T2}}>{task.id} · {task.type}</div>
         </div></>}
@@ -3613,8 +3612,7 @@ function ScreenCreate({user,taskCount,onSave,onCancel,defaultDept,taskToEdit,sav
 
   return(
     <div style={{minHeight:"100vh",background:BG}}>
-      <NavBar
-        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onCancel}/><div style={{fontWeight:700,fontSize:15,color:T1}}>{isEdit?"Editar Tarea":"Nueva Tarea"}</div></>}
+      <NavBar left={<><BackBtn onClick={onCancel}/><div style={{fontWeight:700,fontSize:15,color:T1}}>{isEdit?"Editar Tarea":"Nueva Tarea"}</div></>}
         center={null}
         right={null}
       />
@@ -3937,8 +3935,7 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onDeleteAviso,
     const isOwner=a.origen?.id===user.id;
     return(
       <div style={{minHeight:"100vh",background:BG}}>
-        <NavBar
-          realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={()=>setSelectedAviso(null)}/><div>
+        <NavBar left={<><BackBtn onClick={()=>setSelectedAviso(null)}/><div>
             <div style={{fontWeight:700,fontSize:15,color:T1}}>Detalle de aviso</div>
           </div></>}
           center={null}
@@ -4162,8 +4159,7 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onDeleteAviso,
 
   return(
     <div ref={scrollRef} style={{minHeight:"100vh",background:BG,overflowY:"auto"}}>
-      <NavBar
-        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onBack}/><div>
+      <NavBar left={<><BackBtn onClick={onBack}/><div>
           <div style={{fontWeight:700,fontSize:15,color:T1}}>Avisos</div>
           <div style={{fontSize:11,color:T2}}>{unread.length>0?`${unread.length} sin leer`:"Al día"}</div>
         </div></>}
@@ -4345,8 +4341,7 @@ function ScreenDelays({tasks,user,onBack,onTaskClick}){
 
   return(
     <div style={{minHeight:"100vh",background:BG}}>
-      <NavBar
-        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onBack}/><div>
+      <NavBar left={<><BackBtn onClick={onBack}/><div>
           <div style={{fontWeight:700,fontSize:15,color:T1}}>Retrasos — Resumen Ejecutivo</div>
           <div style={{fontSize:11,color:T2}}>{delayed.length} tarea{delayed.length!==1?"s":""} con retraso o bloqueo</div>
         </div></>}
@@ -4446,8 +4441,7 @@ function ScreenStuckTasks({tasks,user,onBack,onTaskClick}){
 
   return(
     <div ref={scrollRef} style={{minHeight:"100vh",background:BG,overflowY:"auto"}}>
-      <NavBar
-        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onBack}/><div>
+      <NavBar left={<><BackBtn onClick={onBack}/><div>
           <div style={{fontWeight:700,fontSize:15,color:T1}}>Tareas estancadas</div>
           <div style={{fontSize:11,color:T2}}>{stuckItems.length} tarea{stuckItems.length!==1?"s":""} sin avance</div>
         </div></>}
@@ -4516,8 +4510,7 @@ function ScreenDeletedTasks({deletedTasks,user,onBack}){
 
   return(
     <div style={{minHeight:"100vh",background:BG}}>
-      <NavBar
-        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onBack}/><div>
+      <NavBar left={<><BackBtn onClick={onBack}/><div>
           <div style={{fontWeight:700,fontSize:15,color:T1}}>Registro de Eliminaciones</div>
           <div style={{fontSize:11,color:T2}}>{deletedTasks.length} tarea{deletedTasks.length!==1?"s":""} eliminada{deletedTasks.length!==1?"s":""}</div>
         </div></>}
@@ -4658,8 +4651,7 @@ function ScreenNotificaciones({tasks,avisos,quickTasks,user,onBack,onTaskClick,o
 
   return(
     <div ref={scrollRef} style={{minHeight:"100vh",background:BG,overflowY:"auto"}}>
-      <NavBar
-        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onBack}/><div>
+      <NavBar left={<><BackBtn onClick={onBack}/><div>
           <div style={{fontWeight:700,fontSize:15,color:T1}}>Notificaciones</div>
           <div style={{fontSize:11,color:T2}}>{items.length} en total</div>
         </div></>}
@@ -5706,7 +5698,10 @@ export default function App(){
     const d=pwdModal.dept;setSelDept(d);setDeptCanAdd(false);setScreen("dept");setPwdModal(null);
   };
 
-  if(screen==="login") return <><style>{CSS}</style><ScreenLogin onLogin={u=>{
+  // Valor del contexto Realtime disponible en todas las pantallas
+  const realtimeContextValue={status:realtimeStatus,lastSyncTime};
+
+  if(screen==="login") return <RealtimeContext.Provider value={realtimeContextValue}><style>{CSS}</style><ScreenLogin onLogin={u=>{
     setUser(u);
     setAuthedDepts(p=>[...p,u.dept]);
     setPwdModal(null);
@@ -5722,21 +5717,21 @@ export default function App(){
     setScreen("dash");
     localStorage.setItem("taskops_user",JSON.stringify(u));
     // Ya NO llamamos registerPush() automáticamente - se activará con interacción explícita
-  }} onBack={()=>setScreen("dash")}/></>;
+  }} onBack={()=>setScreen("dash")}/></RealtimeContext.Provider>;
 
-  if(screen==="create"&&user) return <><style>{CSS}</style><ScreenCreate user={user} taskCount={tasks.length} defaultDept={createDept} saveError={saveError} onSave={t=>{return addTask(t).then(ok=>{if(ok)setScreen(createDept?"dept":"dash");}).catch(err=>{console.error("[onSave] Error:",err);});}} onCancel={()=>{setSaveError(null);setScreen(createDept?"dept":"dash");}}/></>;
+  if(screen==="create"&&user) return <RealtimeContext.Provider value={realtimeContextValue}><style>{CSS}</style><ScreenCreate user={user} taskCount={tasks.length} defaultDept={createDept} saveError={saveError} onSave={t=>{return addTask(t).then(ok=>{if(ok)setScreen(createDept?"dept":"dash");}).catch(err=>{console.error("[onSave] Error:",err);});}} onCancel={()=>{setSaveError(null);setScreen(createDept?"dept":"dash");}}/></RealtimeContext.Provider>;
 
-  if(screen==="edit"&&editingTask&&user) return <><style>{CSS}</style><ScreenCreate user={user} taskCount={tasks.length} taskToEdit={editingTask} onSave={patch=>{updateTask(editingTask.id,patch);setEditingTask(null);setScreen("task");}} onCancel={()=>{setEditingTask(null);setScreen("task");}}/></>;
+  if(screen==="edit"&&editingTask&&user) return <RealtimeContext.Provider value={realtimeContextValue}><style>{CSS}</style><ScreenCreate user={user} taskCount={tasks.length} taskToEdit={editingTask} onSave={patch=>{updateTask(editingTask.id,patch);setEditingTask(null);setScreen("task");}} onCancel={()=>{setEditingTask(null);setScreen("task");}}/></RealtimeContext.Provider>;
 
   if(screen==="task"&&selTask){
     const live=tasks.find(t=>t.id===selTask.id)||selTask;
-    return <><style>{CSS}</style>
+    return <RealtimeContext.Provider value={realtimeContextValue}><style>{CSS}</style>
       <ScreenTaskDetail taskId={live.id} tasks={tasks} user={user} onBack={()=>setScreen(fromScr)} onUpdate={updateTask} onEdit={t=>{setEditingTask(t);setScreen("edit");}} onDelete={t=>setDeleteTask(t)}/>
       {deleteTask&&<DeleteModal task={deleteTask} onConfirm={()=>{deleteTaskFn(deleteTask.id);setDeleteTask(null);setScreen(fromScr);}} onCancel={()=>setDeleteTask(null)}/>}
-    </>;
+    </RealtimeContext.Provider>;
   }
 
-  if(screen==="dept"&&selDept) return <>
+  if(screen==="dept"&&selDept) return <RealtimeContext.Provider value={realtimeContextValue}>
     <style>{CSS}</style>
     <ScreenDeptDetail dept={selDept} tasks={tasks} user={user} canAdd={deptCanAdd}
       onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"dept")}
@@ -5744,34 +5739,34 @@ export default function App(){
       onRequestAccess={user?()=>setPwdModal({dept:selDept}):undefined}
     />
     {pwdModal&&<PasswordModal dept={pwdModal.dept} onSuccess={handlePwdSuccess} onViewOnly={handleViewOnly} onCancel={()=>setPwdModal(null)}/>}
-  </>;
+  </RealtimeContext.Provider>;
 
-  if(screen==="filtered"&&filter) return <><style>{CSS}</style><ScreenFilteredList tasks={tasks} filter={filter} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"filtered")}/></>;
+  if(screen==="filtered"&&filter) return <RealtimeContext.Provider value={realtimeContextValue}><style>{CSS}</style><ScreenFilteredList tasks={tasks} filter={filter} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"filtered")}/></RealtimeContext.Provider>;
 
-  if(screen==="search") return <><style>{CSS}</style><ScreenSearch tasks={tasks} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"search")} avisos={avisos} onAvisoClick={a=>{setSelAviso(a);setScreen("avisos");}}/></>;
+  if(screen==="search") return <RealtimeContext.Provider value={realtimeContextValue}><style>{CSS}</style><ScreenSearch tasks={tasks} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"search")} avisos={avisos} onAvisoClick={a=>{setSelAviso(a);setScreen("avisos");}}/></RealtimeContext.Provider>;
 
-  if(screen==="myTasks"&&user) return <><style>{CSS}</style><ScreenMyTasks tasks={tasks} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"myTasks")}/></>;
+  if(screen==="myTasks"&&user) return <RealtimeContext.Provider value={realtimeContextValue}><style>{CSS}</style><ScreenMyTasks tasks={tasks} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"myTasks")}/></RealtimeContext.Provider>;
 
-  if(screen==="calendar") return <><style>{CSS}</style><ScreenCalendar tasks={tasks} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"calendar")}/></>;
+  if(screen==="calendar") return <RealtimeContext.Provider value={realtimeContextValue}><style>{CSS}</style><ScreenCalendar tasks={tasks} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"calendar")}/></RealtimeContext.Provider>;
 
-  if(screen==="stats") return <><style>{CSS}</style><ScreenStats tasks={tasks} user={user} onBack={()=>setScreen("dash")}/></>;
+  if(screen==="stats") return <RealtimeContext.Provider value={realtimeContextValue}><style>{CSS}</style><ScreenStats tasks={tasks} user={user} onBack={()=>setScreen("dash")}/></RealtimeContext.Provider>;
 
-  if(screen==="delays"&&user) return <><style>{CSS}</style><ScreenDelays tasks={tasks} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"delays")}/></>;
+  if(screen==="delays"&&user) return <RealtimeContext.Provider value={realtimeContextValue}><style>{CSS}</style><ScreenDelays tasks={tasks} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"delays")}/></RealtimeContext.Provider>;
 
-  if(screen==="stuck"&&user) return <><style>{CSS}</style><ScreenStuckTasks tasks={tasks} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"stuck")}/></>;
+  if(screen==="stuck"&&user) return <RealtimeContext.Provider value={realtimeContextValue}><style>{CSS}</style><ScreenStuckTasks tasks={tasks} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"stuck")}/></RealtimeContext.Provider>;
 
-  if(screen==="deleted"&&user&&(user.dept==="Dirección"||user.dept==="Ingenieria")) return <><style>{CSS}</style><ScreenDeletedTasks deletedTasks={deletedTasks} user={user} onBack={()=>setScreen("dash")}/></>;
+  if(screen==="deleted"&&user&&(user.dept==="Dirección"||user.dept==="Ingenieria")) return <RealtimeContext.Provider value={realtimeContextValue}><style>{CSS}</style><ScreenDeletedTasks deletedTasks={deletedTasks} user={user} onBack={()=>setScreen("dash")}/></RealtimeContext.Provider>;
 
-  if(screen==="avisos"&&user) return <><style>{CSS}</style><ScreenAviso user={user} avisos={avisos} onSend={sendAviso} onMarkRead={markAvisoRead} onUpdateAviso={updateAviso} onDeleteAviso={deleteAviso} onBack={()=>{setSelAviso(null);setScreen("dash");}} initialSelected={selAviso}/></>;
+  if(screen==="avisos"&&user) return <RealtimeContext.Provider value={realtimeContextValue}><style>{CSS}</style><ScreenAviso user={user} avisos={avisos} onSend={sendAviso} onMarkRead={markAvisoRead} onUpdateAviso={updateAviso} onDeleteAviso={deleteAviso} onBack={()=>{setSelAviso(null);setScreen("dash");}} initialSelected={selAviso}/></RealtimeContext.Provider>;
 
-  if(screen==="notif"&&user) return <><style>{CSS}</style><ScreenNotificaciones tasks={tasks} avisos={avisos} quickTasks={quickTasks} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"notif")} onAvisoClick={a=>{setSelAviso(a);setScreen("avisos");}} onQuickTaskClick={qt=>setScreen("quickTasks")} lastNotifView={lastNotifView}/></>;
+  if(screen==="notif"&&user) return <RealtimeContext.Provider value={realtimeContextValue}><style>{CSS}</style><ScreenNotificaciones tasks={tasks} avisos={avisos} quickTasks={quickTasks} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>goTask(t,"notif")} onAvisoClick={a=>{setSelAviso(a);setScreen("avisos");}} onQuickTaskClick={qt=>setScreen("quickTasks")} lastNotifView={lastNotifView}/></RealtimeContext.Provider>;
 
-  if(screen==="ausencias") return <><style>{CSS}</style><ScreenAusencias user={user} ausencias={ausencias} onBack={()=>setScreen("dash")} cargarAusencias={cargarAusencias}/></>;
+  if(screen==="ausencias") return <RealtimeContext.Provider value={realtimeContextValue}><style>{CSS}</style><ScreenAusencias user={user} ausencias={ausencias} onBack={()=>setScreen("dash")} cargarAusencias={cargarAusencias}/></RealtimeContext.Provider>;
 
-  if(screen==="quickTasks"&&user) return <><style>{CSS}</style><ScreenQuickTasks user={user} quickTasks={quickTasks} onBack={()=>setScreen("dash")} onCreateTask={createQuickTask} onUpdateTask={updateQuickTask} onDeleteTask={deleteQuickTask} onRestoreTask={restoreQuickTask}/></>;
+  if(screen==="quickTasks"&&user) return <RealtimeContext.Provider value={realtimeContextValue}><style>{CSS}</style><ScreenQuickTasks user={user} quickTasks={quickTasks} onBack={()=>setScreen("dash")} onCreateTask={createQuickTask} onUpdateTask={updateQuickTask} onDeleteTask={deleteQuickTask} onRestoreTask={restoreQuickTask}/></RealtimeContext.Provider>;
 
   return(
-    <>
+    <RealtimeContext.Provider value={realtimeContextValue}>
       <style>{CSS}</style>
       <ScreenDashboard tasks={tasks} user={user}
         onStatClick={f=>{setFilter(f);setScreen("filtered");}}
@@ -5820,6 +5815,6 @@ export default function App(){
           </button>
         </div>
       )}
-    </>
+    </RealtimeContext.Provider>
   );
 }
