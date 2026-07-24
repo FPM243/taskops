@@ -263,11 +263,49 @@ function ProgressBar({pct,color}){
   );
 }
 
-function NavBar({left,center,right}){
+function RealtimeStatus({status,lastSyncTime}){
+  const [isMobile,setIsMobile]=useState(window.innerWidth<480);
+  useEffect(()=>{
+    const handler=()=>setIsMobile(window.innerWidth<480);
+    window.addEventListener("resize",handler);
+    return ()=>window.removeEventListener("resize",handler);
+  },[]);
+
+  const fmtTime=(ts)=>{
+    return new Date(ts).toLocaleTimeString("es-MX",{
+      hour:"numeric",
+      minute:"2-digit",
+      hour12:true
+    }).toLowerCase();
+  };
+
+  const dotColor=status==="connected"?"#059669":status==="connecting"?"#94A3B8":"#DC2626";
+  const timeStr=fmtTime(lastSyncTime);
+
+  return(
+    <div style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:T3,userSelect:"none"}}>
+      <span style={{color:dotColor,fontSize:14,lineHeight:1}}>●</span>
+      {!isMobile&&(
+        status==="connected"?(
+          <span>{timeStr}</span>
+        ):status==="connecting"?(
+          <span style={{color:"#94A3B8",fontWeight:500}}>Conectando...</span>
+        ):(
+          <span style={{color:"#DC2626",fontWeight:500}}>Desconectado — {timeStr}</span>
+        )
+      )}
+    </div>
+  );
+}
+
+function NavBar({left,center,right,realtimeStatus}){
   return <div style={{background:CARD,borderBottom:`1px solid ${BD}`,padding:"0 20px",display:"flex",alignItems:"center",justifyContent:"space-between",height:60,position:"sticky",top:0,zIndex:50,boxShadow:"0 1px 4px rgba(15,23,42,.06)"}}>
     <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>{left}</div>
     <div style={{display:"flex",alignItems:"center",gap:8,flex:1,justifyContent:"center",flexWrap:"wrap"}}>{center}</div>
-    <div style={{display:"flex",alignItems:"center",gap:8,position:"relative",flexShrink:0}}>{right}</div>
+    <div style={{display:"flex",alignItems:"center",gap:12,position:"relative",flexShrink:0}}>
+      {realtimeStatus&&<RealtimeStatus status={realtimeStatus.status} lastSyncTime={realtimeStatus.lastSyncTime}/>}
+      {right}
+    </div>
   </div>;
 }
 function Logo(){
@@ -1191,7 +1229,7 @@ function ScreenDashboard({tasks,user,onStatClick,onDeptClick,onPickerDeptClick,o
   return(
     <div ref={scrollRef} style={{minHeight:"100vh",background:BG,overflowY:"auto"}}>
       <NavBar
-        left={<Logo/>}
+        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<Logo/>}
         center={null}
         right={<>
           <button onClick={()=>setPickerOpen(p=>!p)}
@@ -1417,7 +1455,7 @@ function ScreenMyTasks({tasks,user,onBack,onTaskClick}){
   return(
     <div ref={scrollRef} style={{minHeight:"100vh",background:BG,overflowY:"auto"}}>
       <NavBar
-        left={<><BackBtn onClick={onBack}/><div>
+        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onBack}/><div>
           <div style={{fontWeight:700,fontSize:15,color:T1}}>Mis Tareas</div>
           <div style={{fontSize:11,color:T2}}>{user.name} · {user.dept}</div>
         </div></>}
@@ -1469,7 +1507,7 @@ function ScreenFilteredList({tasks,filter,user,onBack,onTaskClick}){
   const list=useMemo(()=>[...tasks.filter(cfg.fn)].sort((a,b)=>({Alta:0,Media:1,Baja:2}[a.priority]||1)-({Alta:0,Media:1,Baja:2}[b.priority]||1)),[tasks,filter]);
   return(
     <div style={{minHeight:"100vh",background:BG}}>
-      <NavBar left={<><BackBtn onClick={onBack}/><div><div style={{fontWeight:700,fontSize:15,color:T1}}>{cfg.label}</div><div style={{fontSize:11,color:T2}}>{list.length} tarea{list.length!==1?"s":""}</div></div></>} center={null} right={null}/>
+      <NavBar realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onBack}/><div><div style={{fontWeight:700,fontSize:15,color:T1}}>{cfg.label}</div><div style={{fontSize:11,color:T2}}>{list.length} tarea{list.length!==1?"s":""}</div></div></>} center={null} right={null}/>
       <div style={{maxWidth:900,margin:"0 auto",padding:"24px"}}>
         {list.length===0&&<div style={{textAlign:"center",padding:"60px 0",color:T3,fontSize:14}}>No hay tareas con este filtro</div>}
         {list.map(t=><TRow key={t.id} t={t} onClick={()=>onTaskClick(t)}/>)}
@@ -1499,7 +1537,7 @@ function ScreenSearch({tasks,user,onBack,onTaskClick,avisos,onAvisoClick}){
   return(
     <div ref={scrollRef} style={{minHeight:"100vh",background:BG,overflowY:"auto"}}>
       <NavBar
-        left={<><BackBtn onClick={onBack}/><Logo/></>}
+        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onBack}/><Logo/></>}
         center={<input value={q} onChange={e=>setQ(e.target.value)} autoFocus placeholder="Buscar tareas o avisos..." style={{...inp,width:"min(400px,60vw)",borderRadius:20}}/>}
         right={null}
       />
@@ -1573,7 +1611,7 @@ function ScreenAusencias({user,ausencias,onBack,cargarAusencias}){
   return(
     <div style={{minHeight:"100vh",background:BG}}>
       <NavBar
-        left={<><BackBtn onClick={onBack}/><div style={{fontWeight:700,fontSize:15,color:T1}}>Ausencias</div></>}
+        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onBack}/><div style={{fontWeight:700,fontSize:15,color:T1}}>Ausencias</div></>}
         center={null}
         right={<div style={{display:"flex",gap:8,alignItems:"center"}}>
           <button onClick={()=>setVistaActual("semanal")}
@@ -1964,7 +2002,7 @@ function ScreenCalendar({tasks,user,onBack,onTaskClick}){
   return(
     <div style={{minHeight:"100vh",background:BG}}>
       <NavBar
-        left={<><BackBtn onClick={onBack}/><div><div style={{fontWeight:700,fontSize:15,color:T1}}>Calendario</div><div style={{fontSize:11,color:T2}}>{MONTHS_ES[month]} {year}</div></div></>}
+        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onBack}/><div><div style={{fontWeight:700,fontSize:15,color:T1}}>Calendario</div><div style={{fontSize:11,color:T2}}>{MONTHS_ES[month]} {year}</div></div></>}
         center={null}
         right={<div style={{display:"flex",gap:8,alignItems:"center"}}>
           <button onClick={prevMonth} className="nb" style={{padding:"6px 10px"}}>←</button>
@@ -2136,7 +2174,7 @@ function ScreenStats({tasks,user,onBack}){
   return(
     <div style={{minHeight:"100vh",background:BG}}>
       <NavBar
-        left={<><BackBtn onClick={onBack}/><div><div style={{fontWeight:700,fontSize:15,color:T1}}>Estadísticas</div><div style={{fontSize:11,color:T2}}>{tasks.length} tareas en total</div></div></>}
+        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onBack}/><div><div style={{fontWeight:700,fontSize:15,color:T1}}>Estadísticas</div><div style={{fontSize:11,color:T2}}>{tasks.length} tareas en total</div></div></>}
         center={null}
         right={<button onClick={exportCSV} style={{background:"#ECFDF5",border:"1px solid #A7F3D0",color:"#059669",padding:"7px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600}}>⬇ Exportar CSV</button>}
       />
@@ -2369,7 +2407,7 @@ function ScreenDeptDetail({dept,tasks,user,onBack,onTaskClick,onNewTask,canAdd,o
   return(
     <div style={{minHeight:"100vh",background:BG}}>
       <NavBar
-        left={<><BackBtn onClick={onBack}/><div>
+        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onBack}/><div>
           <div style={{fontWeight:700,fontSize:15,color:T1,display:"flex",alignItems:"center",gap:8}}><div style={{width:9,height:9,borderRadius:"50%",background:dc(dept)}}/>{dept}</div>
           <div style={{fontSize:11,color:T2}}>{deptTasks.length} tarea{deptTasks.length!==1?"s":""} activa{deptTasks.length!==1?"s":""}</div>
         </div></>}
@@ -2610,7 +2648,7 @@ function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDe
     return(
       <div style={{minHeight:"100vh",background:BG}}>
         <NavBar
-          left={<button onClick={()=>setSelectedTask(null)} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:T1}}>←</button>}
+          realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<button onClick={()=>setSelectedTask(null)} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:T1}}>←</button>}
           center={<span style={{fontSize:14,fontWeight:600,color:T1}}>Detalle de tarea rápida</span>}
           right={null}
         />
@@ -2755,7 +2793,7 @@ function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDe
   return(
     <div ref={scrollRef} style={{minHeight:"100vh",background:BG,overflowY:"auto"}}>
       <NavBar
-        left={<button onClick={onBack} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:T1}}>←</button>}
+        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<button onClick={onBack} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:T1}}>←</button>}
         center={<span style={{fontSize:14,fontWeight:600,color:T1}}>⚡ Tareas Rápidas</span>}
         right={<button onClick={()=>setShowCreateForm(true)}
           style={{background:PR,color:"#fff",border:"none",padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>
@@ -2959,7 +2997,7 @@ function QuickTaskForm({user,task,onSave,onCancel}){
   return(
     <div style={{minHeight:"100vh",background:BG}}>
       <NavBar
-        left={<button onClick={onCancel} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:T1}}>←</button>}
+        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<button onClick={onCancel} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:T1}}>←</button>}
         center={<span style={{fontSize:14,fontWeight:600,color:T1}}>{task?"Editar tarea":"Nueva tarea rápida"}</span>}
         right={null}
       />
@@ -3201,7 +3239,7 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
   return(
     <div style={{minHeight:"100vh",background:BG}}>
       <NavBar
-        left={<><BackBtn onClick={onBack}/><div>
+        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onBack}/><div>
           <div style={{fontWeight:700,fontSize:14,color:T1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:260}}>{task.title}</div>
           <div style={{fontSize:11,color:T2}}>{task.id} · {task.type}</div>
         </div></>}
@@ -3576,7 +3614,7 @@ function ScreenCreate({user,taskCount,onSave,onCancel,defaultDept,taskToEdit,sav
   return(
     <div style={{minHeight:"100vh",background:BG}}>
       <NavBar
-        left={<><BackBtn onClick={onCancel}/><div style={{fontWeight:700,fontSize:15,color:T1}}>{isEdit?"Editar Tarea":"Nueva Tarea"}</div></>}
+        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onCancel}/><div style={{fontWeight:700,fontSize:15,color:T1}}>{isEdit?"Editar Tarea":"Nueva Tarea"}</div></>}
         center={null}
         right={null}
       />
@@ -3900,7 +3938,7 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onDeleteAviso,
     return(
       <div style={{minHeight:"100vh",background:BG}}>
         <NavBar
-          left={<><BackBtn onClick={()=>setSelectedAviso(null)}/><div>
+          realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={()=>setSelectedAviso(null)}/><div>
             <div style={{fontWeight:700,fontSize:15,color:T1}}>Detalle de aviso</div>
           </div></>}
           center={null}
@@ -4125,7 +4163,7 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onDeleteAviso,
   return(
     <div ref={scrollRef} style={{minHeight:"100vh",background:BG,overflowY:"auto"}}>
       <NavBar
-        left={<><BackBtn onClick={onBack}/><div>
+        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onBack}/><div>
           <div style={{fontWeight:700,fontSize:15,color:T1}}>Avisos</div>
           <div style={{fontSize:11,color:T2}}>{unread.length>0?`${unread.length} sin leer`:"Al día"}</div>
         </div></>}
@@ -4308,7 +4346,7 @@ function ScreenDelays({tasks,user,onBack,onTaskClick}){
   return(
     <div style={{minHeight:"100vh",background:BG}}>
       <NavBar
-        left={<><BackBtn onClick={onBack}/><div>
+        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onBack}/><div>
           <div style={{fontWeight:700,fontSize:15,color:T1}}>Retrasos — Resumen Ejecutivo</div>
           <div style={{fontSize:11,color:T2}}>{delayed.length} tarea{delayed.length!==1?"s":""} con retraso o bloqueo</div>
         </div></>}
@@ -4409,7 +4447,7 @@ function ScreenStuckTasks({tasks,user,onBack,onTaskClick}){
   return(
     <div ref={scrollRef} style={{minHeight:"100vh",background:BG,overflowY:"auto"}}>
       <NavBar
-        left={<><BackBtn onClick={onBack}/><div>
+        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onBack}/><div>
           <div style={{fontWeight:700,fontSize:15,color:T1}}>Tareas estancadas</div>
           <div style={{fontSize:11,color:T2}}>{stuckItems.length} tarea{stuckItems.length!==1?"s":""} sin avance</div>
         </div></>}
@@ -4479,7 +4517,7 @@ function ScreenDeletedTasks({deletedTasks,user,onBack}){
   return(
     <div style={{minHeight:"100vh",background:BG}}>
       <NavBar
-        left={<><BackBtn onClick={onBack}/><div>
+        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onBack}/><div>
           <div style={{fontWeight:700,fontSize:15,color:T1}}>Registro de Eliminaciones</div>
           <div style={{fontSize:11,color:T2}}>{deletedTasks.length} tarea{deletedTasks.length!==1?"s":""} eliminada{deletedTasks.length!==1?"s":""}</div>
         </div></>}
@@ -4621,7 +4659,7 @@ function ScreenNotificaciones({tasks,avisos,quickTasks,user,onBack,onTaskClick,o
   return(
     <div ref={scrollRef} style={{minHeight:"100vh",background:BG,overflowY:"auto"}}>
       <NavBar
-        left={<><BackBtn onClick={onBack}/><div>
+        realtimeStatus={{status:realtimeStatus,lastSyncTime}} left={<><BackBtn onClick={onBack}/><div>
           <div style={{fontWeight:700,fontSize:15,color:T1}}>Notificaciones</div>
           <div style={{fontSize:11,color:T2}}>{items.length} en total</div>
         </div></>}
@@ -4689,6 +4727,100 @@ export default function App(){
   const [showPushBanner, setShowPushBanner]= useState(false);
   const [pushEnabled, setPushEnabled]= useState(()=>localStorage.getItem("taskops_push_enabled")==="true");
 
+  // Estados de conexión Realtime
+  const [realtimeStatus,setRealtimeStatus]=useState("connecting");
+  const [lastSyncTime,setLastSyncTime]=useState(Date.now());
+  const watchdogTimeoutRef=useRef(null);
+  const channelsRef=useRef({tasks:null,avisos:null,quickTasks:null,ausencias:null});
+  const backgroundTimeRef=useRef(null);
+
+  // Función para recargar datos desde Supabase (resincronización forzada)
+  const reloadAllData=useCallback(()=>{
+    console.log("[Realtime] Recarga forzada de datos desde Supabase");
+
+    // Recargar tasks
+    supabase.from("tasks").select("*").then(({data,error})=>{
+      if(error){console.error("[Realtime] Error recargando tasks:",error.message);return;}
+      const sorted=[...data].sort((a,b)=>new Date(b.data?.createdAt||0)-new Date(a.data?.createdAt||0));
+      const taskData=sorted.map(r=>r.data);
+      setTasks(taskData);
+      try{localStorage.setItem("nexus_tasks_cache",JSON.stringify(taskData));}catch(e){}
+      console.log("[Realtime] Tasks recargadas:",data.length);
+    });
+
+    // Recargar avisos
+    supabase.from("avisos").select("*").then(({data,error})=>{
+      if(error){console.error("[Realtime] Error recargando avisos:",error.message);return;}
+      setAvisos([...data].sort((a,b)=>new Date(b.data?.fecha||0)-new Date(a.data?.fecha||0)).map(r=>r.data));
+      console.log("[Realtime] Avisos recargados:",data.length);
+    });
+
+    // Recargar quick_tasks
+    supabase.from("quick_tasks").select("*").then(({data,error})=>{
+      if(error){console.error("[Realtime] Error recargando quick_tasks:",error.message);return;}
+      setQuickTasks([...data].sort((a,b)=>new Date(b.data?.createdAt||0)-new Date(a.data?.createdAt||0)).map(r=>r.data));
+      console.log("[Realtime] Quick tasks recargadas:",data.length);
+    });
+  },[]);
+
+  // Función para actualizar timestamp de sincronización
+  const updateSyncTime=useCallback(()=>{
+    setLastSyncTime(Date.now());
+    setRealtimeStatus("connected");
+
+    // Reset del watchdog: cancelar timeout anterior y crear uno nuevo
+    if(watchdogTimeoutRef.current){
+      clearTimeout(watchdogTimeoutRef.current);
+    }
+    watchdogTimeoutRef.current=setTimeout(()=>{
+      // Después de 60s sin eventos, verificar el estado de los canales
+      const anyChannelJoined=Object.values(channelsRef.current).some(ch=>ch?.state==="joined");
+      if(anyChannelJoined){
+        // Canal sigue conectado, actualizar timestamp
+        setLastSyncTime(Date.now());
+        setRealtimeStatus("connected");
+      }else{
+        // Ningún canal está "joined" — desconectado
+        setRealtimeStatus("disconnected");
+      }
+    },60000); // 60 segundos
+  },[]);
+
+  // Listener de visibilitychange para manejar iOS PWA
+  useEffect(()=>{
+    const handleVisibilityChange=()=>{
+      if(document.visibilityState==="hidden"){
+        // App entra en background — guardar timestamp
+        backgroundTimeRef.current=Date.now();
+      }else if(document.visibilityState==="visible"){
+        // App vuelve a foreground
+        const timeInBackground=backgroundTimeRef.current?(Date.now()-backgroundTimeRef.current):0;
+        const anyChannelJoined=Object.values(channelsRef.current).some(ch=>ch?.state==="joined");
+
+        if(timeInBackground>30000){
+          // Más de 30 segundos en background — recargar datos forzadamente
+          console.log(`[Realtime] Estuvo ${Math.round(timeInBackground/1000)}s en background — recargando datos`);
+          reloadAllData();
+          updateSyncTime();
+        }else if(anyChannelJoined){
+          // Menos de 30s en background y canal conectado — solo actualizar timestamp
+          updateSyncTime();
+        }else{
+          // No hay canales conectados — marcar como desconectado
+          setRealtimeStatus("disconnected");
+          // Los canales deberían reconectar automáticamente (Supabase realtime lo maneja)
+        }
+
+        backgroundTimeRef.current=null;
+      }
+    };
+    document.addEventListener("visibilitychange",handleVisibilityChange);
+    return ()=>{
+      document.removeEventListener("visibilitychange",handleVisibilityChange);
+      if(watchdogTimeoutRef.current) clearTimeout(watchdogTimeoutRef.current);
+    };
+  },[updateSyncTime,reloadAllData]);
+
   // Mostrar banner de notificaciones push si el usuario no ha decidido aún
   useEffect(()=>{
     if(!user) return;
@@ -4727,14 +4859,23 @@ export default function App(){
       });
     const ch=supabase.channel("avisos-realtime")
       .on("postgres_changes",{event:"INSERT",schema:"public",table:"avisos"},({new:row})=>{
+        updateSyncTime();
         setAvisos(p=>p.some(a=>a.id===row.id)?p:[row.data,...p]);
       })
       .on("postgres_changes",{event:"UPDATE",schema:"public",table:"avisos"},({new:row})=>{
+        updateSyncTime();
         setAvisos(p=>p.map(a=>a.id===row.id?row.data:a));
       })
-      .subscribe();
-    return ()=>supabase.removeChannel(ch);
-  },[]);
+      .subscribe(status=>{
+        if(status==="SUBSCRIBED") updateSyncTime();
+        if(status==="CHANNEL_ERROR"||status==="CLOSED") setRealtimeStatus("disconnected");
+      });
+    channelsRef.current.avisos=ch;
+    return ()=>{
+      supabase.removeChannel(ch);
+      channelsRef.current.avisos=null;
+    };
+  },[updateSyncTime]);
 
   // Supabase quick_tasks: carga + realtime
   useEffect(()=>{
@@ -4747,19 +4888,29 @@ export default function App(){
     const ch=supabase.channel("quick-tasks-realtime")
       .on("postgres_changes",{event:"INSERT",schema:"public",table:"quick_tasks"},({new:row})=>{
         console.log("[Supabase] Realtime INSERT quick_task:", row.id);
+        updateSyncTime();
         setQuickTasks(p=>p.some(t=>t.id===row.id)?p:[row.data,...p]);
       })
       .on("postgres_changes",{event:"UPDATE",schema:"public",table:"quick_tasks"},({new:row})=>{
         console.log("[Supabase] Realtime UPDATE quick_task:", row.id);
+        updateSyncTime();
         setQuickTasks(p=>p.map(t=>t.id===row.id?row.data:t));
       })
       .on("postgres_changes",{event:"DELETE",schema:"public",table:"quick_tasks"},({old:row})=>{
         console.log("[Supabase] Realtime DELETE quick_task:", row.id);
+        updateSyncTime();
         setQuickTasks(p=>p.filter(t=>t.id!==row.id));
       })
-      .subscribe();
-    return ()=>supabase.removeChannel(ch);
-  },[]);
+      .subscribe(status=>{
+        if(status==="SUBSCRIBED") updateSyncTime();
+        if(status==="CHANNEL_ERROR"||status==="CLOSED") setRealtimeStatus("disconnected");
+      });
+    channelsRef.current.quickTasks=ch;
+    return ()=>{
+      supabase.removeChannel(ch);
+      channelsRef.current.quickTasks=null;
+    };
+  },[updateSyncTime]);
 
   // Función para cargar ausencias (±6 meses) - siempre con fechas frescas
   const cargarAusencias=useCallback(()=>{
@@ -4784,11 +4935,19 @@ export default function App(){
     const ch=supabase.channel("ausencias-realtime")
       .on("postgres_changes",{event:"*",schema:"public",table:"ausencias"},()=>{
         console.log("[Supabase] Cambio detectado en tabla ausencias — recargando...");
+        updateSyncTime();
         cargarAusencias();
       })
-      .subscribe();
-    return ()=>supabase.removeChannel(ch);
-  },[cargarAusencias]);
+      .subscribe(status=>{
+        if(status==="SUBSCRIBED") updateSyncTime();
+        if(status==="CHANNEL_ERROR"||status==="CLOSED") setRealtimeStatus("disconnected");
+      });
+    channelsRef.current.ausencias=ch;
+    return ()=>{
+      supabase.removeChannel(ch);
+      channelsRef.current.ausencias=null;
+    };
+  },[cargarAusencias,updateSyncTime]);
 
   // Service Worker: registrar y detectar actualizaciones, sin interrumpir
   // al usuario a media tarea (ej. mientras llena el formulario de crear tarea).
@@ -4873,6 +5032,7 @@ export default function App(){
     const channel=supabase.channel("tasks-realtime")
       .on("postgres_changes",{event:"INSERT",schema:"public",table:"tasks"},({new:row})=>{
         console.log("[Supabase] Realtime INSERT:", row.id);
+        updateSyncTime();
         setTasks(p => {
           const updated = p.some(t=>t.id===row.id) ? p : [row.data,...p];
           try { localStorage.setItem("nexus_tasks_cache", JSON.stringify(updated)); } catch(e){}
@@ -4881,6 +5041,7 @@ export default function App(){
       })
       .on("postgres_changes",{event:"UPDATE",schema:"public",table:"tasks"},({new:row})=>{
         console.log("[Supabase] Realtime UPDATE:", row.id);
+        updateSyncTime();
         setTasks(p => {
           const updated = p.map(t=>t.id===row.id?row.data:t);
           try { localStorage.setItem("nexus_tasks_cache", JSON.stringify(updated)); } catch(e){}
@@ -4889,6 +5050,7 @@ export default function App(){
       })
       .on("postgres_changes",{event:"DELETE",schema:"public",table:"tasks"},({old:row})=>{
         console.log("[Supabase] Realtime DELETE:", row.id);
+        updateSyncTime();
         setTasks(p => {
           const updated = p.filter(t=>t.id!==row.id);
           try { localStorage.setItem("nexus_tasks_cache", JSON.stringify(updated)); } catch(e){}
@@ -4897,12 +5059,22 @@ export default function App(){
       })
       .subscribe(status=>{
         console.log("[Supabase] Canal realtime:", status);
-        if(status==="SUBSCRIBED") setDbConnected(true);
-        if(status==="CHANNEL_ERROR"||status==="TIMED_OUT") setDbConnected(false);
+        if(status==="SUBSCRIBED"){
+          setDbConnected(true);
+          updateSyncTime();
+        }
+        if(status==="CHANNEL_ERROR"||status==="TIMED_OUT"||status==="CLOSED"){
+          setDbConnected(false);
+          setRealtimeStatus("disconnected");
+        }
       });
 
-    return ()=>supabase.removeChannel(channel);
-  },[]);
+    channelsRef.current.tasks=channel;
+    return ()=>{
+      supabase.removeChannel(channel);
+      channelsRef.current.tasks=null;
+    };
+  },[updateSyncTime]);
 
   // Deep-link: abrir tarea desde URL ?task= y opcionalmente ejecutar ?action=
   useEffect(()=>{
