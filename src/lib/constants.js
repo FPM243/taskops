@@ -11,6 +11,9 @@ export const VAPID_PUBLIC_KEY = "BDPhk-gLXmglq2HQL7tVFaXUpMTA4Lb6CFVVHN8FRfsmR3S
 
 export const LOGO_URL = "/fpm-logo.jpg";
 
+// Versión de la aplicación (inyectada por Vite en tiempo de build)
+export { APP_VERSION } from './version';
+
 // ════════════════════════════════════════
 // USUARIOS Y DEPARTAMENTOS
 // ════════════════════════════════════════

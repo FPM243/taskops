@@ -6,7 +6,7 @@ import {
   DEPTS, USERS_BY_DEPT, ASSIGN_MATRIX, PUEDE_REGISTRAR_AUSENCIAS,
   TIPO_AUSENCIA_CONFIG, TIPO_AUSENCIA_ABBR, DIAS_SEMANA_OPTS,
   TT, SC, PC, FS_CFG, BLANK, MONTHS_ES, DAYS_ES, DAYS_WORK, IT, LOGO_URL,
-  BG, CARD, BD, T1, T2, T3, PR, PRl, SH, SHm, fnt, inp, CSS
+  BG, CARD, BD, T1, T2, T3, PR, PRl, SH, SHm, fnt, inp, CSS, APP_VERSION
 } from "./lib/constants";
 import {
   safeDate, safeDays, fmtDT, fmtCompletedDate, fmtDate, fmtISODateLocal, isoWeekday, isTodayDeadline,
@@ -15,6 +15,8 @@ import {
   avisoRecipients, avisoIncludesUser, genStageId, getStageIds, calcProgress,
   getAssignableIds, verifyDeptPassword
 } from "./lib/helpers";
+import { registerVersion, checkForUpdate, showUpdateBanner } from "./lib/version";
+import ScreenVersions from "./components/ScreenVersions";
 
 // Funciones utilitarias movidas a src/lib/helpers.js
 
@@ -85,21 +87,7 @@ function urlBase64ToUint8Array(base64String) {
   return out;
 }
 
-function showUpdateBanner() {
-  if (document.getElementById("taskops-update-banner")) return;
-  const bar = document.createElement("div");
-  bar.id = "taskops-update-banner";
-  bar.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:9999;background:#1E293B;color:#fff;padding:12px 16px;display:flex;align-items:center;justify-content:center;gap:12px;font-family:inherit;font-size:13px;box-shadow:0 -2px 12px rgba(0,0,0,.25);flex-wrap:wrap;";
-  const msg = document.createElement("span");
-  msg.textContent = "🔄 Hay una nueva versión disponible.";
-  const btn = document.createElement("button");
-  btn.textContent = "Actualizar ahora";
-  btn.style.cssText = "background:#fff;color:#1E293B;border:none;padding:7px 14px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;";
-  btn.onclick = () => window.location.reload();
-  bar.appendChild(msg);
-  bar.appendChild(btn);
-  document.body.appendChild(bar);
-}
+// showUpdateBanner ahora se importa desde ./lib/version.js
 
 async function registerPush(user) {
   if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
@@ -1199,7 +1187,7 @@ function FormularioAusencia({user,onClose,onSave,ausenciaEditar}){
 /* ════════════════════════════════════════
    SCREEN: DASHBOARD
 ════════════════════════════════════════ */
-function ScreenDashboard({tasks,user,onStatClick,onDeptClick,onPickerDeptClick,onTaskClick,onNewTask,onSearch,onStats,onMyTasks,onCalendar,onDelays,onDeleted,onStuck,userIsAuthed,onRequestAuth,deptIsAuthed,dbConnected,onAvisos,unreadAvisos,isGuest,onLogin,onNotif,onLogout,unreadNotif,onAusencias,onQuickTasks,quickTasksCount,ausencias,cargarAusencias}){
+function ScreenDashboard({tasks,user,onStatClick,onDeptClick,onPickerDeptClick,onTaskClick,onNewTask,onSearch,onStats,onMyTasks,onCalendar,onDelays,onDeleted,onStuck,userIsAuthed,onRequestAuth,deptIsAuthed,dbConnected,onAvisos,unreadAvisos,isGuest,onLogin,onNotif,onLogout,unreadNotif,onAusencias,onQuickTasks,quickTasksCount,ausencias,cargarAusencias,onVersions}){
   const scrollRef=useScrollRestore("dashboard");
   const [pickerOpen,setPickerOpen]=useState(false);
   const [tab,setTab]=useState("active");
@@ -1299,6 +1287,7 @@ function ScreenDashboard({tasks,user,onStatClick,onDeptClick,onPickerDeptClick,o
         <div className="snav" style={{background:CARD,borderBottom:`1px solid ${BD}`,padding:isMobile?"6px 16px":"0 16px",display:"flex",alignItems:"center",gap:6,height:isMobile?"auto":44,justifyContent:isMobile?"flex-start":"center",flexWrap:"wrap"}}>
           {user?.dept==="Dirección"&&<button className="nb" onClick={onDelays} style={{fontSize:11}}>🚨 Retrasos</button>}
           {(user?.dept==="Dirección"||user?.dept==="Ingenieria")&&<button className="nb" onClick={onDeleted} style={{fontSize:11}}>🗑️ Eliminadas</button>}
+          {(user?.dept==="Dirección"||user?.dept==="Ingenieria")&&<button className="nb" onClick={onVersions} style={{fontSize:11}}>📱 Versiones</button>}
           <button className="nb" onClick={onStuck}  style={{fontSize:11}}>⏸ Estancadas</button>
           <button className="nb" onClick={onSearch}  style={{fontSize:11}}>🔍 Buscar</button>
           <button className="nb" onClick={onMyTasks} style={{fontSize:11}}>👤 Mis Tareas</button>
@@ -1438,6 +1427,11 @@ function ScreenDashboard({tasks,user,onStatClick,onDeptClick,onPickerDeptClick,o
         {userIsAuthed?"+":"🔒"}
       </button>}
       {detalleAusencia&&<ModalDetalleAusencia ausencia={detalleAusencia} onClose={()=>setDetalleAusencia(null)} user={user} onEditar={()=>{/* TODO */}} onEliminar={async()=>{/* TODO */}}/>}
+
+      {/* Versión de la app */}
+      <div style={{textAlign:"center",padding:"16px 0 32px",fontSize:11,color:T3,fontFamily:"monospace"}}>
+        NEXUS v{APP_VERSION}
+      </div>
     </div>
   );
 }
@@ -4804,6 +4798,14 @@ export default function App(){
         }
 
         backgroundTimeRef.current=null;
+
+        // Sistema de versiones: registrar versión y verificar actualizaciones al volver de background
+        if(user){
+          registerVersion(user);
+          checkForUpdate().then(({hasUpdate,latestVersion})=>{
+            if(hasUpdate) showUpdateBanner(latestVersion);
+          });
+        }
       }
     };
     document.addEventListener("visibilitychange",handleVisibilityChange);
@@ -4811,7 +4813,7 @@ export default function App(){
       document.removeEventListener("visibilitychange",handleVisibilityChange);
       if(watchdogTimeoutRef.current) clearTimeout(watchdogTimeoutRef.current);
     };
-  },[updateSyncTime,reloadAllData]);
+  },[updateSyncTime,reloadAllData,user]);
 
   // Mostrar banner de notificaciones push si el usuario no ha decidido aún
   useEffect(()=>{
@@ -4824,6 +4826,21 @@ export default function App(){
       return ()=>clearTimeout(timer);
     }
   },[user,pushEnabled]);
+
+  // Sistema de versiones: registrar versión al cargar la app y verificar actualizaciones
+  useEffect(()=>{
+    if(!user) return;
+
+    // Registrar versión del usuario
+    registerVersion(user);
+
+    // Verificar si hay una nueva versión disponible
+    checkForUpdate().then(({hasUpdate,latestVersion})=>{
+      if(hasUpdate){
+        showUpdateBanner(latestVersion);
+      }
+    });
+  },[user]);
 
   // Persistir authedDepts en sessionStorage: un reload (ej. tras actualizar el
   // Service Worker) no debe forzar a re-meter la contraseña de departamento
@@ -4966,7 +4983,8 @@ export default function App(){
       // Si la app está en uso, esperar a que el usuario la deje en segundo plano
       // o decida actualizar manualmente, en vez de recargarla debajo de sus manos.
       if(document.visibilityState==="hidden") doReload();
-      else showUpdateBanner();
+      // NOTA: Banner de actualización ahora manejado por sistema de versiones (src/lib/version.js)
+      // No llamamos showUpdateBanner() aquí para evitar conflictos
     });
     const onVisChange=()=>{
       if(pendingUpdate&&document.visibilityState==="hidden") doReload();
@@ -5765,6 +5783,8 @@ export default function App(){
 
   if(screen==="quickTasks"&&user) return <RealtimeContext.Provider value={realtimeContextValue}><style>{CSS}</style><ScreenQuickTasks user={user} quickTasks={quickTasks} onBack={()=>setScreen("dash")} onCreateTask={createQuickTask} onUpdateTask={updateQuickTask} onDeleteTask={deleteQuickTask} onRestoreTask={restoreQuickTask}/></RealtimeContext.Provider>;
 
+  if(screen==="versions"&&user&&(user.dept==="Dirección"||user.dept==="Ingenieria")) return <RealtimeContext.Provider value={realtimeContextValue}><style>{CSS}</style><ScreenVersions user={user} onBack={()=>setScreen("dash")}/></RealtimeContext.Provider>;
+
   return(
     <RealtimeContext.Provider value={realtimeContextValue}>
       <style>{CSS}</style>
@@ -5781,6 +5801,7 @@ export default function App(){
         onDelays={()=>setScreen("delays")}
         onStuck={()=>setScreen("stuck")}
         onDeleted={()=>setScreen("deleted")}
+        onVersions={()=>setScreen("versions")}
         userIsAuthed={userIsAuthed}
         onRequestAuth={user?()=>setPwdModal({dept:user.dept,fromFab:true}):()=>setScreen("login")}
         deptIsAuthed={canAddInDept}
