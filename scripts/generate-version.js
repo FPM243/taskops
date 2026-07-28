@@ -15,33 +15,28 @@ const month = String(now.getMonth() + 1).padStart(2, '0');
 const day = String(now.getDate()).padStart(2, '0');
 const dateStr = `${year}${month}${day}`;
 
-// Debug: Verificar variables de entorno de Vercel
-console.log('[Version] VERCEL_GIT_COMMIT_SHA:', process.env.VERCEL_GIT_COMMIT_SHA);
-console.log('[Version] VERCEL_GIT_COMMIT_REF:', process.env.VERCEL_GIT_COMMIT_REF);
-console.log('[Version] VERCEL:', process.env.VERCEL);
-console.log('[Version] Todas las envs con VERCEL:',
-  Object.keys(process.env).filter(k => k.startsWith('VERCEL')));
-
 // Obtener commit hash corto (7 caracteres)
-// Prioridad: 1) Vercel env vars, 2) Git local, 3) fallback "dev"
+// Prioridad: 1) Git local, 2) Vercel env vars, 3) fallback "dev"
 let commitHash = 'dev';
 let source = 'fallback';
 
-// Nivel 1: Variable de entorno de Vercel (producción)
-if (process.env.VERCEL_GIT_COMMIT_SHA) {
-  commitHash = process.env.VERCEL_GIT_COMMIT_SHA.substring(0, 7);
-  source = 'VERCEL_GIT_COMMIT_SHA';
+// Nivel 1: Git local (funciona en local y debería funcionar en Vercel)
+try {
+  commitHash = execSync('git rev-parse --short=7 HEAD', { encoding: 'utf8' }).trim();
+  source = 'git local';
   console.log(`✓ Commit hash desde ${source}: ${commitHash}`);
 }
-// Nivel 2: Git local (desarrollo)
-else {
-  try {
-    commitHash = execSync('git rev-parse --short=7 HEAD', { encoding: 'utf8' }).trim();
-    source = 'git local';
+// Nivel 2: Variable de entorno de Vercel (backup si git falla)
+catch (e) {
+  if (process.env.VERCEL_GIT_COMMIT_SHA) {
+    commitHash = process.env.VERCEL_GIT_COMMIT_SHA.substring(0, 7);
+    source = 'VERCEL_GIT_COMMIT_SHA';
     console.log(`✓ Commit hash desde ${source}: ${commitHash}`);
-  } catch (e) {
-    // Nivel 3: Fallback
-    console.warn(`⚠️  No se pudo obtener commit hash (ni Vercel ni git), usando "dev"`);
+  }
+  // Nivel 3: Fallback con warning crítico
+  else {
+    console.warn('⚠️  [Version] NO se pudo detectar el commit hash. Usando \'dev\'.');
+    console.warn('⚠️  [Version] Esto es un problema — revisar generate-version.js');
   }
 }
 

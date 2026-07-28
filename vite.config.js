@@ -12,16 +12,17 @@ function getVersion() {
 
   let commitHash = 'dev';
 
-  // Nivel 1: Variable de entorno de Vercel (producción)
-  if (process.env.VERCEL_GIT_COMMIT_SHA) {
-    commitHash = process.env.VERCEL_GIT_COMMIT_SHA.substring(0, 7);
+  // Nivel 1: Git local (funciona en local y debería funcionar en Vercel)
+  try {
+    commitHash = execSync('git rev-parse --short=7 HEAD', { encoding: 'utf8' }).trim();
   }
-  // Nivel 2: Git local (desarrollo)
-  else {
-    try {
-      commitHash = execSync('git rev-parse --short=7 HEAD', { encoding: 'utf8' }).trim();
-    } catch (e) {
-      // Nivel 3: Fallback
+  // Nivel 2: Variable de entorno de Vercel (backup si git falla)
+  catch (e) {
+    if (process.env.VERCEL_GIT_COMMIT_SHA) {
+      commitHash = process.env.VERCEL_GIT_COMMIT_SHA.substring(0, 7);
+    }
+    // Nivel 3: Fallback
+    else {
       commitHash = 'dev';
     }
   }
