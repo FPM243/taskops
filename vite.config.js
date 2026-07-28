@@ -11,10 +11,19 @@ function getVersion() {
   const dateStr = `${year}${month}${day}`;
 
   let commitHash = 'dev';
-  try {
-    commitHash = execSync('git rev-parse --short=7 HEAD', { encoding: 'utf8' }).trim();
-  } catch (e) {
-    console.warn('⚠️  No se pudo obtener git commit hash, usando "dev"');
+
+  // Nivel 1: Variable de entorno de Vercel (producción)
+  if (process.env.VERCEL_GIT_COMMIT_SHA) {
+    commitHash = process.env.VERCEL_GIT_COMMIT_SHA.substring(0, 7);
+  }
+  // Nivel 2: Git local (desarrollo)
+  else {
+    try {
+      commitHash = execSync('git rev-parse --short=7 HEAD', { encoding: 'utf8' }).trim();
+    } catch (e) {
+      // Nivel 3: Fallback
+      commitHash = 'dev';
+    }
   }
 
   return `1.0.${dateStr}-${commitHash}`;
