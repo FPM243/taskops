@@ -3198,7 +3198,7 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
   const canChangeState=user?(user.dept==="Dirección"||task.responsible?.id===user.id):false;
   const canDelete=user?(user.dept==="Dirección"||task.creator?.id===user.id):false;
   const canReopen=user?(user.dept==="Dirección"||user.dept==="Ingenieria"||task.creator?.id===user.id):false;
-  const canEdit=canChangeState;
+  const canEdit=user?(user.dept==="Dirección"||task.responsible?.id===user.id||task.creator?.id===user.id):false;
   const invIds=task.invIds||[];const flowStates=task.flowStates||{};
   const flowStageIds=getStageIds(invIds,task.flowStageIds);
 
