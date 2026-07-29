@@ -9,7 +9,18 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-async function sendSms(to: string, message: string) {
+// Rate limiting: 1 SMS por segundo (Twilio límite estándar)
+const RATE_LIMIT_MS = 1000;
+
+interface SmsResult {
+  to: string;
+  success: boolean;
+  sid?: string;
+  error?: any;
+  errorCode?: string;
+}
+
+async function sendSms(to: string, message: string): Promise<SmsResult> {
   const url = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`;
   const auth = btoa(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`);
   const body = new URLSearchParams({
@@ -18,21 +29,40 @@ async function sendSms(to: string, message: string) {
     Body: message,
   });
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Authorization": `Basic ${auth}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body,
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    console.error("[SMS] Error sending to", to, ":", JSON.stringify(data));
-    return { to, success: false, error: data };
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Authorization": `Basic ${auth}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body,
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      console.error(`[SMS] ✗ Error enviando a ${to}:`, JSON.stringify(data));
+      return {
+        to,
+        success: false,
+        error: data.message || data.detail || "Unknown error",
+        errorCode: data.code || String(res.status),
+      };
+    }
+
+    console.log(`[SMS] ✓ Enviado a ${to}, SID: ${data.sid}`);
+    return { to, success: true, sid: data.sid };
+
+  } catch (err: any) {
+    console.error(`[SMS] ✗ Excepción enviando a ${to}:`, err.message);
+    return {
+      to,
+      success: false,
+      error: err.message,
+      errorCode: "EXCEPTION",
+    };
   }
-  console.log("[SMS] Sent to:", to, "sid:", data.sid);
-  return { to, success: true, sid: data.sid };
 }
 
 serve(async (req) => {
@@ -49,7 +79,19 @@ serve(async (req) => {
     const { type, to, data } = await req.json();
 
     if (!to || !to.length) {
-      return new Response(JSON.stringify({ error: "No recipients" }), { status: 400, headers: corsHeaders });
+      return new Response(JSON.stringify({ error: "No recipients" }), {
+        status: 400,
+        headers: corsHeaders
+      });
+    }
+
+    // Validar credenciales de Twilio
+    if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_PHONE_NUMBER) {
+      console.error("[SMS] Credenciales de Twilio no configuradas");
+      return new Response(JSON.stringify({ error: "Twilio no configurado" }), {
+        status: 500,
+        headers: corsHeaders
+      });
     }
 
     let message = "";
@@ -94,23 +136,57 @@ serve(async (req) => {
         break;
 
       default:
-        return new Response(JSON.stringify({ error: "Unknown type" }), { status: 400, headers: corsHeaders });
+        return new Response(JSON.stringify({ error: "Unknown type" }), {
+          status: 400,
+          headers: corsHeaders
+        });
     }
 
-    // Send to all recipients
-    const results = await Promise.all(
-      to.map((phone: string) => sendSms(phone, message))
-    );
-    const sent = results.filter((r) => r.success).length;
+    // Validar longitud del mensaje (Twilio límite: 1600 caracteres)
+    if (message.length > 1600) {
+      message = message.substring(0, 1597) + "...";
+      console.warn("[SMS] Mensaje truncado a 1600 caracteres");
+    }
 
-    return new Response(JSON.stringify({ ok: true, sent, total: to.length, results }), {
+    // Enviar SMS con rate limiting
+    const results: SmsResult[] = [];
+    for (let i = 0; i < to.length; i++) {
+      const phone = to[i];
+
+      // Enviar SMS
+      const result = await sendSms(phone, message);
+      results.push(result);
+
+      // Rate limiting: esperar entre envíos (excepto en el último)
+      if (i < to.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_MS));
+      }
+    }
+
+    const sent = results.filter((r) => r.success).length;
+    const failed = results.filter((r) => !r.success);
+
+    // Log detallado de resultados
+    console.log(`[SMS] Resumen: ${sent}/${to.length} enviados exitosamente`);
+    if (failed.length > 0) {
+      console.warn(`[SMS] ${failed.length} SMS fallaron:`,
+        JSON.stringify(failed.map(f => ({ to: f.to, error: f.error, code: f.errorCode })), null, 2));
+    }
+
+    return new Response(JSON.stringify({
+      ok: true,
+      sent,
+      total: to.length,
+      results, // Incluye detalle completo para debugging
+    }), {
       headers: { "Content-Type": "application/json", ...corsHeaders },
     });
 
-  } catch (err) {
-    console.error("[SMS] Error:", err.message);
+  } catch (err: any) {
+    console.error("[SMS] Error fatal:", err.message);
     return new Response(JSON.stringify({ error: err.message }), {
-      status: 500, headers: corsHeaders
+      status: 500,
+      headers: corsHeaders
     });
   }
 });

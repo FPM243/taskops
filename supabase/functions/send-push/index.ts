@@ -43,40 +43,83 @@ serve(async (req) => {
 
     if (dbErr) throw new Error(dbErr.message);
 
+    if (!tokens || tokens.length === 0) {
+      console.log("[send-push] No se encontraron tokens para userIds:", userIds);
+      return new Response(JSON.stringify({ sent: 0, total: 0 }), {
+        headers: { ...CORS, "Content-Type": "application/json" },
+      });
+    }
+
     const payload = JSON.stringify({ title, body, url });
     let sent = 0;
     const expired: string[] = [];
+    const failed: Array<{ userId: string, error: string }> = [];
 
-    for (const token of tokens ?? []) {
+    for (const token of tokens) {
       try {
-        await webpush.sendNotification(
-          typeof token.subscription === "string"
-            ? JSON.parse(token.subscription)
-            : token.subscription,
-          payload
-        );
+        const subscription = typeof token.subscription === "string"
+          ? JSON.parse(token.subscription)
+          : token.subscription;
+
+        await webpush.sendNotification(subscription, payload, {
+          TTL: 86400, // NUEVO: TTL de 24 horas (86400 segundos)
+        });
         sent++;
+        console.log(`[send-push] ✓ Enviado a user ${token.id}`);
       } catch (err: any) {
-        console.error(`[send-push] Fallo para user ${token.id}: ${err.statusCode} ${err.message}`);
-        // 410 Gone / 404 Not Found → subscription expirada, eliminar
-        if (err.statusCode === 410 || err.statusCode === 404) {
+        const statusCode = err.statusCode || 0;
+        const errorMsg = err.message || String(err);
+
+        console.error(`[send-push] ✗ Fallo para user ${token.id}: ${statusCode} ${errorMsg}`);
+
+        // 410 Gone / 404 Not Found → subscription expirada
+        if (statusCode === 410 || statusCode === 404) {
           expired.push(token.id);
+          console.log(`[send-push] → Token expirado, marcado para eliminación: ${token.id}`);
+        }
+        // 400 Bad Request / 401 Unauthorized → token inválido
+        else if (statusCode === 400 || statusCode === 401) {
+          expired.push(token.id);
+          console.log(`[send-push] → Token inválido, marcado para eliminación: ${token.id}`);
+        }
+        // Otros errores (network, timeout, etc.) → solo loguear, no eliminar
+        else {
+          failed.push({ userId: token.id, error: `${statusCode}: ${errorMsg}` });
         }
       }
     }
 
-    // Limpiar subscriptions expiradas
+    // Limpiar subscriptions expiradas/inválidas
     if (expired.length > 0) {
-      await supabase.from("push_tokens").delete().in("id", expired);
-      console.log(`[send-push] Eliminadas ${expired.length} subscriptions expiradas`);
+      const { error: deleteErr } = await supabase
+        .from("push_tokens")
+        .delete()
+        .in("id", expired);
+
+      if (deleteErr) {
+        console.error("[send-push] Error al eliminar tokens expirados:", deleteErr.message);
+      } else {
+        console.log(`[send-push] ✓ Eliminados ${expired.length} tokens expirados/inválidos`);
+      }
+    }
+
+    // Log de errores no fatales (network, etc.)
+    if (failed.length > 0) {
+      console.warn(`[send-push] ${failed.length} notificaciones fallaron (errores no-token):`,
+        JSON.stringify(failed, null, 2));
     }
 
     return new Response(
-      JSON.stringify({ sent, total: (tokens ?? []).length }),
+      JSON.stringify({
+        sent,
+        total: tokens.length,
+        expired: expired.length,
+        failed: failed.length
+      }),
       { headers: { ...CORS, "Content-Type": "application/json" } }
     );
   } catch (err: any) {
-    console.error("[send-push] Error:", err.message);
+    console.error("[send-push] Error fatal:", err.message);
     return new Response(
       JSON.stringify({ error: err.message }),
       { status: 500, headers: { ...CORS, "Content-Type": "application/json" } }

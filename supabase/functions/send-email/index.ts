@@ -2,15 +2,49 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
 const FROM_EMAIL = "nexus@fpm.com.mx";
-const FROM_NAME = "NEXUS | Fine Pitch de México";
+const FROM_NAME = "NEXUS FPM"; // Acortado para evitar filtros de spam
 
 interface EmailPayload {
   to: string[];
   subject: string;
   html: string;
+  text: string; // NUEVO: versión texto plano obligatoria
 }
 
-async function sendEmail(payload: EmailPayload) {
+// Rate limiting: max 5 emails por segundo
+const emailQueue: Array<{ resolve: Function, reject: Function, payload: EmailPayload }> = [];
+let processing = false;
+const RATE_LIMIT_MS = 200; // 200ms entre emails = 5 emails/segundo
+
+async function processQueue() {
+  if (processing || emailQueue.length === 0) return;
+  processing = true;
+
+  while (emailQueue.length > 0) {
+    const { resolve, reject, payload } = emailQueue.shift()!;
+    try {
+      const result = await sendEmailDirect(payload);
+      resolve(result);
+    } catch (err) {
+      reject(err);
+    }
+    // Esperar entre emails para respetar rate limit
+    if (emailQueue.length > 0) {
+      await new Promise(r => setTimeout(r, RATE_LIMIT_MS));
+    }
+  }
+
+  processing = false;
+}
+
+async function sendEmail(payload: EmailPayload): Promise<any> {
+  return new Promise((resolve, reject) => {
+    emailQueue.push({ resolve, reject, payload });
+    processQueue();
+  });
+}
+
+async function sendEmailDirect(payload: EmailPayload) {
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -22,9 +56,39 @@ async function sendEmail(payload: EmailPayload) {
       to: payload.to,
       subject: payload.subject,
       html: payload.html,
+      text: payload.text, // NUEVO: texto plano
+      headers: {
+        // NUEVO: Encabezado List-Unsubscribe (evita spam)
+        "List-Unsubscribe": "<https://taskops-kappa.vercel.app/unsubscribe>",
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+      },
     }),
   });
-  return res.json();
+
+  const data = await res.json();
+
+  if (!res.ok) {
+    console.error("[send-email] Error de Resend:", JSON.stringify(data));
+    throw new Error(data.message || "Error al enviar email");
+  }
+
+  return data;
+}
+
+// Función auxiliar para convertir HTML a texto plano
+function htmlToPlainText(html: string): string {
+  return html
+    .replace(/<style[^>]*>.*?<\/style>/gi, '')
+    .replace(/<script[^>]*>.*?<\/script>/gi, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n\s*\n\s*\n/g, '\n\n')
+    .trim();
 }
 
 function emailTemplate(title: string, body: string, taskId?: string, taskTitle?: string, avisoId?: string) {
@@ -34,7 +98,8 @@ function emailTemplate(title: string, body: string, taskId?: string, taskTitle?:
     ? `https://taskops-kappa.vercel.app/?aviso=${avisoId}`
     : null;
   const linkLabel = taskId ? `Ver tarea ${taskId} →` : "Ver aviso →";
-  return `
+
+  const html = `
   <!DOCTYPE html>
   <html>
   <head><meta charset="utf-8"></head>
@@ -59,6 +124,23 @@ function emailTemplate(title: string, body: string, taskId?: string, taskTitle?:
     </div>
   </body>
   </html>`;
+
+  // Generar versión texto plano
+  const text = `
+NEXUS | Fine Pitch de México
+────────────────────────────────
+
+${title}
+
+${htmlToPlainText(body)}
+
+${linkHref ? `\n${linkLabel}\n${linkHref}\n` : ''}
+
+────────────────────────────────
+Este es un mensaje automático de NEXUS. No respondas a este correo.
+  `.trim();
+
+  return { html, text };
 }
 
 serve(async (req) => {
@@ -79,12 +161,13 @@ serve(async (req) => {
     }
 
     let subject = "";
-    let html = "";
+    let htmlBody = "";
+    let textBody = "";
 
     switch (type) {
       case "nueva_tarea":
-        subject = `📋 Nueva tarea asignada: ${data.taskTitle}`;
-        html = emailTemplate(
+        subject = `Nueva tarea asignada: ${data.taskTitle}`;
+        const template1 = emailTemplate(
           "Se te asignó una nueva tarea",
           `<p>Hola <strong>${data.userName}</strong>,</p>
            <p>Tienes una nueva tarea asignada en NEXUS:</p>
@@ -98,11 +181,13 @@ serve(async (req) => {
           data.taskId,
           data.taskTitle
         );
+        htmlBody = template1.html;
+        textBody = template1.text;
         break;
 
       case "tu_turno":
-        subject = `⚡ Tu turno en el flujo: ${data.taskTitle}`;
-        html = emailTemplate(
+        subject = `Tu turno en el flujo: ${data.taskTitle}`;
+        const template2 = emailTemplate(
           "Es tu turno en el flujo de trabajo",
           `<p>Hola <strong>${data.userName}</strong>,</p>
            <p><strong>${data.prevUserName}</strong> completó su etapa en la siguiente tarea y ahora es tu turno:</p>
@@ -111,11 +196,13 @@ serve(async (req) => {
           data.taskId,
           data.taskTitle
         );
+        htmlBody = template2.html;
+        textBody = template2.text;
         break;
 
       case "tarea_completada":
-        subject = `✅ Tarea completada: ${data.taskTitle}`;
-        html = emailTemplate(
+        subject = `Tarea completada: ${data.taskTitle}`;
+        const template3 = emailTemplate(
           "Una tarea fue marcada como completada",
           `<p>Hola <strong>${data.userName}</strong>,</p>
            <p>La siguiente tarea ha sido completada:</p>
@@ -124,11 +211,13 @@ serve(async (req) => {
           data.taskId,
           data.taskTitle
         );
+        htmlBody = template3.html;
+        textBody = template3.text;
         break;
 
       case "aviso":
-        subject = `📢 Aviso de ${data.fromName}: ${data.texto.slice(0, 50)}${data.texto.length > 50 ? "..." : ""}`;
-        html = emailTemplate(
+        subject = `Aviso de ${data.fromName}: ${data.texto.slice(0, 50)}${data.texto.length > 50 ? "..." : ""}`;
+        const template4 = emailTemplate(
           `Aviso de ${data.fromName} (${data.fromDept})`,
           `<p>Hola <strong>${data.userName}</strong>,</p>
            <p>Tienes un nuevo aviso:</p>
@@ -137,11 +226,13 @@ serve(async (req) => {
           undefined,
           data.avisoId
         );
+        htmlBody = template4.html;
+        textBody = template4.text;
         break;
 
       case "tarea_vencida":
-        subject = `⚠️ Tarea vencida: ${data.taskTitle}`;
-        html = emailTemplate(
+        subject = `Tarea vencida: ${data.taskTitle}`;
+        const template5 = emailTemplate(
           "Tienes una tarea vencida",
           `<p>Hola <strong>${data.userName}</strong>,</p>
            <p>La siguiente tarea venció hace <strong>${data.daysLate} día${data.daysLate !== 1 ? "s" : ""}</strong> y aún no ha sido completada:</p>
@@ -150,22 +241,26 @@ serve(async (req) => {
           data.taskId,
           data.taskTitle
         );
+        htmlBody = template5.html;
+        textBody = template5.text;
         break;
 
       case "avance_flujo":
-        subject = `📊 Avance en tu tarea: ${data.taskTitle}`;
-        html = emailTemplate(
+        subject = `Avance en tu tarea: ${data.taskTitle}`;
+        const template6 = emailTemplate(
           "Avance en el flujo de tu tarea",
           `<p>Hola <strong>${data.userName}</strong>,</p>
            <p><strong>${data.whoName}</strong> (${data.whoDept}) cambió su etapa a <strong>"${data.newState}"</strong> en la siguiente tarea:</p>
            <p style="background:#EEF2FF;border-left:3px solid #4338CA;padding:12px 16px;border-radius:4px;font-weight:600;color:#1E1B4B;">${data.taskTitle}</p>`,
           data.taskId
         );
+        htmlBody = template6.html;
+        textBody = template6.text;
         break;
 
       case "preparate":
-        subject = `⚡ Prepárate — tu turno se acerca: ${data.taskTitle}`;
-        html = emailTemplate(
+        subject = `Tu turno se acerca: ${data.taskTitle}`;
+        const template7 = emailTemplate(
           "Tu turno se acerca",
           `<p>Hola <strong>${data.userName}</strong>,</p>
            <p><strong>${data.prevUserName}</strong> acaba de iniciar su etapa. Una vez que termine, será tu turno en:</p>
@@ -173,11 +268,13 @@ serve(async (req) => {
            <p>Prepárate para actuar cuando llegue tu turno.</p>`,
           data.taskId
         );
+        htmlBody = template7.html;
+        textBody = template7.text;
         break;
 
       case "tarea_bloqueada":
-        subject = `🔒 Tarea bloqueada: ${data.taskTitle}`;
-        html = emailTemplate(
+        subject = `Tarea bloqueada: ${data.taskTitle}`;
+        const template8 = emailTemplate(
           "Una tarea fue marcada como bloqueada",
           `<p>Hola <strong>${data.userName}</strong>,</p>
            <p>La siguiente tarea fue bloqueada por <strong>${data.blockedBy}</strong>:</p>
@@ -186,11 +283,13 @@ serve(async (req) => {
            <p>Se requiere atención para desbloquear el avance.</p>`,
           data.taskId
         );
+        htmlBody = template8.html;
+        textBody = template8.text;
         break;
 
       case "nuevo_comentario":
-        subject = `💬 Nuevo comentario en: ${data.taskTitle}`;
-        html = emailTemplate(
+        subject = `Nuevo comentario en: ${data.taskTitle}`;
+        const template9 = emailTemplate(
           "Nuevo comentario en una tarea",
           `<p>Hola <strong>${data.userName}</strong>,</p>
            <p><strong>${data.commenterName}</strong> comentó en la siguiente tarea:</p>
@@ -199,12 +298,14 @@ serve(async (req) => {
           data.taskId,
           data.taskTitle
         );
+        htmlBody = template9.html;
+        textBody = template9.text;
         break;
 
       case "resumen_deadlines": {
         const proximas = data.proximas || [];
         const vencidas = data.vencidas || [];
-        subject = `📋 Resumen de deadlines — ${proximas.length} próxima(s), ${vencidas.length} vencida(s)`;
+        subject = `Resumen de deadlines: ${proximas.length} próxima(s), ${vencidas.length} vencida(s)`;
 
         const rowsHtml = (items: any[], dateKey: string) => items.map((t) => `
           <tr>
@@ -228,19 +329,21 @@ serve(async (req) => {
             </table>
           </div>`;
 
-        html = emailTemplate(
+        const template10 = emailTemplate(
           "Resumen diario de deadlines",
           `<p>Hola,</p>
            <p>Este es el resumen de tareas con deadline próximo o vencido:</p>
-           ${sectionHtml("⏰ Próximas a vencer", "#D97706", "#FFFBEB", proximas, "FECHA LÍMITE", "deadline")}
-           ${sectionHtml("⚠️ Vencidas", "#DC2626", "#FEF2F2", vencidas, "DÍAS VENCIDA", "daysLate")}`
+           ${sectionHtml("Próximas a vencer", "#D97706", "#FFFBEB", proximas, "FECHA LÍMITE", "deadline")}
+           ${sectionHtml("Vencidas", "#DC2626", "#FEF2F2", vencidas, "DÍAS VENCIDA", "daysLate")}`
         );
+        htmlBody = template10.html;
+        textBody = template10.text;
         break;
       }
 
       case "deadline_proximo":
-        subject = `⏰ Tarea vence en ${data.hoursLeft}h: ${data.taskTitle}`;
-        html = emailTemplate(
+        subject = `Tarea vence en ${data.hoursLeft}h: ${data.taskTitle}`;
+        const template11 = emailTemplate(
           "Tarea próxima a vencer",
           `<p>Hola <strong>${data.userName}</strong>,</p>
            <p>La siguiente tarea vence en <strong>${data.hoursLeft} horas</strong>:</p>
@@ -248,11 +351,13 @@ serve(async (req) => {
            <p><strong>Fecha límite:</strong> ${data.deadline}</p>`,
           data.taskId
         );
+        htmlBody = template11.html;
+        textBody = template11.text;
         break;
 
       case "quick_task_created":
-        subject = `⚡ Nueva tarea rápida: ${data.taskTitle}`;
-        html = `
+        subject = `Nueva tarea rápida: ${data.taskTitle}`;
+        htmlBody = `
         <!DOCTYPE html>
         <html>
         <head><meta charset="utf-8"></head>
@@ -263,7 +368,7 @@ serve(async (req) => {
               <span style="color:#DDD6FE;font-size:12px;">| Fine Pitch de México</span>
             </div>
             <div style="padding:28px;">
-              <h2 style="color:#1E1B4B;font-size:18px;margin:0 0 12px;">⚡ Nueva tarea rápida asignada</h2>
+              <h2 style="color:#1E1B4B;font-size:18px;margin:0 0 12px;">Nueva tarea rápida asignada</h2>
               <div style="color:#64748B;font-size:14px;line-height:1.7;">
                 <p>Hola <strong>${data.userName}</strong>,</p>
                 <p>Se creó una nueva tarea rápida para <strong>${data.dept}</strong>:</p>
@@ -289,11 +394,12 @@ serve(async (req) => {
           </div>
         </body>
         </html>`;
+        textBody = `NEXUS | Fine Pitch de México\n\nNueva tarea rápida asignada\n\nHola ${data.userName},\n\nSe creó una nueva tarea rápida para ${data.dept}:\n\n${data.taskTitle}\n${data.taskDescription}\n\nDEPARTAMENTO: ${data.dept}\nPRIORIDAD: ${data.priority}\nFECHA LÍMITE: ${data.deadline}\nCREADA POR: ${data.creatorName}\n\nVer tarea rápida →\nhttps://taskops-kappa.vercel.app/?quickTask=${data.taskId}\n\n────────────────────────────────\nEste es un mensaje automático de NEXUS. No respondas a este correo.`;
         break;
 
       case "quick_task_comment":
-        subject = `💬 Comentario en tarea rápida: ${data.taskTitle}`;
-        html = `
+        subject = `Comentario en tarea rápida: ${data.taskTitle}`;
+        htmlBody = `
         <!DOCTYPE html>
         <html>
         <head><meta charset="utf-8"></head>
@@ -304,7 +410,7 @@ serve(async (req) => {
               <span style="color:#DDD6FE;font-size:12px;">| Fine Pitch de México</span>
             </div>
             <div style="padding:28px;">
-              <h2 style="color:#1E1B4B;font-size:18px;margin:0 0 12px;">💬 Nuevo comentario en tarea rápida</h2>
+              <h2 style="color:#1E1B4B;font-size:18px;margin:0 0 12px;">Nuevo comentario en tarea rápida</h2>
               <div style="color:#64748B;font-size:14px;line-height:1.7;">
                 <p>Hola <strong>${data.userName}</strong>,</p>
                 <p><strong>${data.commenterName}</strong> comentó en la siguiente tarea rápida:</p>
@@ -325,14 +431,15 @@ serve(async (req) => {
           </div>
         </body>
         </html>`;
+        textBody = `NEXUS | Fine Pitch de México\n\nNuevo comentario en tarea rápida\n\nHola ${data.userName},\n\n${data.commenterName} comentó en la siguiente tarea rápida:\n\n${data.taskTitle}\n${data.dept}\n\n"${data.commentText}"\n\nVer tarea rápida →\nhttps://taskops-kappa.vercel.app/?quickTask=${data.taskId}\n\n────────────────────────────────\nEste es un mensaje automático de NEXUS. No respondas a este correo.`;
         break;
 
       default:
         return new Response(JSON.stringify({ error: "Unknown type" }), { status: 400 });
     }
 
-    const result = await sendEmail({ to, subject, html });
-    console.log("[send-email] Resultado:", JSON.stringify(result));
+    const result = await sendEmail({ to, subject, html: htmlBody, text: textBody });
+    console.log("[send-email] Enviado exitosamente:", type, "→", to.length, "destinatario(s)");
 
     return new Response(JSON.stringify({ ok: true, result }), {
       headers: {
@@ -341,7 +448,7 @@ serve(async (req) => {
       },
     });
 
-  } catch (err) {
+  } catch (err: any) {
     console.error("[send-email] Error:", err.message);
     return new Response(JSON.stringify({ error: err.message }), { status: 500 });
   }
