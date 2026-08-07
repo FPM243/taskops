@@ -96,7 +96,7 @@ serve(async (req) => {
           break;
 
         case "aviso":
-          message = `💬 *Aviso de ${data.fromName}* (${data.fromDept}):\n\n${data.texto}`;
+          message = `💬 *Aviso de ${data.fromName}* (${data.fromDept}):\n\n${data.texto}\n\n🔗 Ver en app: ${APP}/?aviso=${data.avisoId}`;
           break;
 
         case "nuevo_comentario":

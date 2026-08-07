@@ -124,7 +124,7 @@ serve(async (req) => {
         break;
 
       case "aviso":
-        message = `NEXUS: Aviso de ${data.fromName} (${data.fromDept}): ${data.texto}`;
+        message = `NEXUS: Aviso de ${data.fromName} (${data.fromDept}): ${data.texto}. Ver: ${APP}/?aviso=${data.avisoId}`;
         break;
 
       case "nuevo_comentario":
