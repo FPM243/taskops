@@ -81,13 +81,17 @@ export async function sendPushNotification(userIds, title, body, url="/") {
 export async function sendEmailNotification(type, to, data) {
   if (!to || !to.length) return;
   try {
-    const { error } = await supabase.functions.invoke("send-email", {
+    console.log(`[Email DEBUG] Invocando send-email:`, { type, to, dataKeys: Object.keys(data) });
+    const { data: result, error } = await supabase.functions.invoke("send-email", {
       body: { type, to, data },
     });
-    if (error) console.error("[Email] send-email error:", error.message);
-    else console.log(`[Email] Enviado tipo '${type}' a ${to.length} destinatario(s)`);
+    if (error) {
+      console.error("[Email] Error de Supabase Functions:", error);
+      return;
+    }
+    console.log(`[Email] Respuesta de Edge Function:`, result);
   } catch (err) {
-    console.error("[Email] Error invocando send-email:", err.message);
+    console.error("[Email] Exception:", err);
   }
 }
 
@@ -98,13 +102,17 @@ export async function sendEmailNotification(type, to, data) {
 export async function sendWhatsAppNotification(type, toPhones, data) {
   if (!toPhones || !toPhones.length) return;
   try {
-    const { error } = await supabase.functions.invoke("send-whatsapp", {
+    console.log(`[WhatsApp DEBUG] Invocando send-whatsapp:`, { type, toPhones, dataKeys: Object.keys(data) });
+    const { data: result, error } = await supabase.functions.invoke("send-whatsapp", {
       body: { type, to: toPhones, data },
     });
-    if (error) console.error("[WhatsApp] error:", error.message);
-    else console.log(`[WhatsApp] Enviado tipo '${type}' a ${toPhones.length} destinatario(s)`);
+    if (error) {
+      console.error("[WhatsApp] Error de Supabase Functions:", error);
+      return;
+    }
+    console.log(`[WhatsApp] Respuesta de Edge Function:`, result);
   } catch (err) {
-    console.error("[WhatsApp] Error:", err.message);
+    console.error("[WhatsApp] Exception:", err);
   }
 }
 
@@ -115,13 +123,22 @@ export async function sendWhatsAppNotification(type, toPhones, data) {
 export async function sendSMSNotification(type, toPhones, data) {
   if (!toPhones || !toPhones.length) return;
   try {
-    const { error } = await supabase.functions.invoke("send-sms", {
+    console.log(`[SMS DEBUG] Invocando send-sms:`, { type, toPhones, dataKeys: Object.keys(data) });
+    const { data: result, error } = await supabase.functions.invoke("send-sms", {
       body: { type, to: toPhones, data },
     });
-    if (error) console.error("[SMS] error:", error.message);
-    else console.log(`[SMS] Enviado tipo '${type}' a ${toPhones.length} destinatario(s)`);
+    if (error) {
+      console.error("[SMS] Error de Supabase Functions:", error);
+      return;
+    }
+    console.log(`[SMS] Respuesta de Edge Function:`, result);
+    if (result?.ok) {
+      console.log(`[SMS] ✓ Enviado tipo '${type}' a ${toPhones.length} destinatario(s):`, result.results);
+    } else {
+      console.warn(`[SMS] ⚠ Respuesta no ok:`, result);
+    }
   } catch (err) {
-    console.error("[SMS] Error:", err.message);
+    console.error("[SMS] Exception:", err);
   }
 }
 

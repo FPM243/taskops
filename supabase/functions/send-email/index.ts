@@ -157,7 +157,13 @@ serve(async (req) => {
     const { type, to, data } = await req.json();
 
     if (!to || !to.length) {
-      return new Response(JSON.stringify({ error: "No recipients" }), { status: 400 });
+      return new Response(JSON.stringify({ error: "No recipients" }), {
+        status: 400,
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        },
+      });
     }
 
     let subject = "";
@@ -435,7 +441,13 @@ serve(async (req) => {
         break;
 
       default:
-        return new Response(JSON.stringify({ error: "Unknown type" }), { status: 400 });
+        return new Response(JSON.stringify({ error: "Unknown type" }), {
+          status: 400,
+          headers: {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+          },
+        });
     }
 
     const result = await sendEmail({ to, subject, html: htmlBody, text: textBody });
@@ -450,6 +462,13 @@ serve(async (req) => {
 
   } catch (err: any) {
     console.error("[send-email] Error:", err.message);
-    return new Response(JSON.stringify({ error: err.message }), { status: 500 });
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+      },
+    });
   }
 });
