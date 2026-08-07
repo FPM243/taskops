@@ -5325,13 +5325,16 @@ export default function App(){
     else {
       console.log("[Supabase] INSERT aviso ok:",a.id);
       const destIds=avisoRecipients(a);
+      console.log("[DEBUG sendAviso] destIds:",destIds);
       const recipientIds=destIds==="todos"
         ?USERS.map(u=>u.id).filter(id=>id!==a.origen?.id)
         :[...new Set(Array.isArray(destIds)?destIds:[destIds])].filter(id=>id&&id!==a.origen?.id);
+      console.log("[DEBUG sendAviso] recipientIds:",recipientIds);
       const pushTitle=`Aviso de ${a.origen?.name||"NEXUS"}`;
       if(recipientIds.length>0) sendPushNotification(recipientIds,pushTitle,a.texto,`/?aviso=${a.id}`);
       recipientIds.forEach(id=>{
         const u=USERS.find(x=>x.id===id);
+        console.log("[DEBUG sendAviso] Processing user:",{id,name:u?.name,hasEmail:!!u?.email,hasPhone:!!u?.phone});
         if(!u) return;
         if(u.email){
           setTimeout(()=>sendEmailNotification("aviso",[u.email],{
@@ -5343,6 +5346,7 @@ export default function App(){
           }),0);
         }
         if(u.phone){
+          console.log("[DEBUG SMS aviso]",u.name,u.phone,a.id);
           setTimeout(()=>sendWhatsAppNotification("aviso",[u.phone],{
             userName:u.name,
             fromName:a.origen?.name||"—",
