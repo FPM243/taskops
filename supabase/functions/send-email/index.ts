@@ -77,18 +77,27 @@ async function sendEmailDirect(payload: EmailPayload) {
 
 // Función auxiliar para convertir HTML a texto plano
 function htmlToPlainText(html: string): string {
-  return html
-    .replace(/<style[^>]*>.*?<\/style>/gi, '')
-    .replace(/<script[^>]*>.*?<\/script>/gi, '')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\n\s*\n\s*\n/g, '\n\n')
-    .trim();
+  if (!html || typeof html !== 'string') {
+    return '';
+  }
+
+  try {
+    return html
+      .replace(/<style[^>]*>.*?<\/style>/gi, '')
+      .replace(/<script[^>]*>.*?<\/script>/gi, '')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/\n\s*\n\s*\n/g, '\n\n')
+      .trim();
+  } catch (err) {
+    console.error("[send-email] Error en htmlToPlainText:", err);
+    return String(html);
+  }
 }
 
 function emailTemplate(title: string, body: string, taskId?: string, taskTitle?: string, avisoId?: string) {
@@ -155,9 +164,22 @@ serve(async (req) => {
 
   try {
     const { type, to, data } = await req.json();
+    console.log(`[Email] Received request - type: ${type}, recipients: ${to?.length || 0}`);
 
     if (!to || !to.length) {
       return new Response(JSON.stringify({ error: "No recipients" }), {
+        status: 400,
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        },
+      });
+    }
+
+    // Validación defensiva: asegurar que data existe
+    if (!data || typeof data !== 'object') {
+      console.error("[send-email] data es inválido:", data);
+      return new Response(JSON.stringify({ error: "Invalid data payload" }), {
         status: 400,
         headers: {
           "Content-Type": "application/json",
@@ -221,13 +243,23 @@ serve(async (req) => {
         textBody = template3.text;
         break;
 
-      case "aviso":
-        subject = `Aviso de ${data.fromName}: ${data.texto.slice(0, 50)}${data.texto.length > 50 ? "..." : ""}`;
+      case "aviso": {
+        const textoSafe = String(data.texto || "");
+        const textoPreview = textoSafe.length > 50 ? textoSafe.slice(0, 50) + "..." : textoSafe;
+        // Escapar HTML en data.texto para evitar XSS y errores de parsing
+        const textoEscaped = textoSafe
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+
+        subject = `Aviso de ${data.fromName}: ${textoPreview}`;
         const template4 = emailTemplate(
           `Aviso de ${data.fromName} (${data.fromDept})`,
           `<p>Hola <strong>${data.userName}</strong>,</p>
            <p>Tienes un nuevo aviso:</p>
-           <div style="background:#FFFBEB;border-left:3px solid #F59E0B;padding:14px 16px;border-radius:4px;color:#78350F;line-height:1.7;">${data.texto}</div>`,
+           <div style="background:#FFFBEB;border-left:3px solid #F59E0B;padding:14px 16px;border-radius:4px;color:#78350F;line-height:1.7;">${textoEscaped}</div>`,
           undefined,
           undefined,
           data.avisoId
@@ -235,6 +267,7 @@ serve(async (req) => {
         htmlBody = template4.html;
         textBody = template4.text;
         break;
+      }
 
       case "tarea_vencida":
         subject = `Tarea vencida: ${data.taskTitle}`;

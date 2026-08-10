@@ -77,9 +77,19 @@ serve(async (req) => {
 
   try {
     const { type, to, data } = await req.json();
+    console.log(`[SMS] Received request - type: ${type}, recipients: ${to?.length || 0}`);
 
     if (!to || !to.length) {
       return new Response(JSON.stringify({ error: "No recipients" }), {
+        status: 400,
+        headers: corsHeaders
+      });
+    }
+
+    // Validación defensiva: asegurar que data existe
+    if (!data || typeof data !== 'object') {
+      console.error("[SMS] data es inválido:", data);
+      return new Response(JSON.stringify({ error: "Invalid data payload" }), {
         status: 400,
         headers: corsHeaders
       });
@@ -123,9 +133,11 @@ serve(async (req) => {
         message = `NEXUS: Tarea bloqueada: ${data.taskTitle}. Bloqueada por: ${data.blockedBy}. Razon: ${data.reason}. Atender: ${APP}/?task=${data.taskId}`;
         break;
 
-      case "aviso":
-        message = `NEXUS: Aviso de ${data.fromName} (${data.fromDept}): ${data.texto}. Ver: ${APP}/?aviso=${data.avisoId}`;
+      case "aviso": {
+        const textoSafe = String(data.texto || "Sin texto");
+        message = `NEXUS: Aviso de ${data.fromName || "—"} (${data.fromDept || "—"}): ${textoSafe}. Ver: ${APP}/?aviso=${data.avisoId}`;
         break;
+      }
 
       case "nuevo_comentario":
         message = `NEXUS: Nuevo comentario de ${data.commenterName} en "${data.taskTitle}": ${data.commentText}. ${APP}/?task=${data.taskId}`;
