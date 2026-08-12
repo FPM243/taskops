@@ -147,6 +147,14 @@ serve(async (req) => {
         message = `NEXUS: Tu tarea vence pronto, ${data.userName}. ${data.taskTitle}. Limite: ${data.deadline} (${data.hoursLeft}h). ${APP}/?task=${data.taskId}`;
         break;
 
+      case "quick_task_created":
+        message = `NEXUS: Nueva tarea rapida asignada: "${data.taskTitle}" (${data.priority}). Asignada por: ${data.creatorName}. Ver: ${APP}/?quickTask=${data.taskId}`;
+        break;
+
+      case "quick_task_comment":
+        message = `NEXUS: Nuevo comentario de ${data.commenterName} en tarea rapida "${data.taskTitle}": ${data.commentText}. Ver: ${APP}/?quickTask=${data.taskId}`;
+        break;
+
       default:
         return new Response(JSON.stringify({ error: "Unknown type" }), {
           status: 400,

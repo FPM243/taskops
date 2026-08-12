@@ -2457,22 +2457,56 @@ function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDe
       })();
       recipientIds.forEach(id=>{
         const u=USERS.find(x=>x.id===id);
-        if(!u?.email) return;
-        setTimeout(async()=>{
-          try{
-            await sendEmailNotification("quick_task_comment",[u.email],{
-              userName:u.name,
-              taskId:selectedTask.id,
-              taskTitle:selectedTask.title,
-              commenterName:user.name,
-              commentText:commentPreview,
-              dept:selectedTask.dept,
-            });
-            console.log("[QuickTask Comment] email OK a",u.email);
-          }catch(e){
-            console.error("[QuickTask Comment] email FAIL",u.email,e);
-          }
-        },0);
+        if(!u) return;
+        if(u.email){
+          setTimeout(async()=>{
+            try{
+              await sendEmailNotification("quick_task_comment",[u.email],{
+                userName:u.name,
+                taskId:selectedTask.id,
+                taskTitle:selectedTask.title,
+                commenterName:user.name,
+                commentText:commentPreview,
+                dept:selectedTask.dept,
+              });
+              console.log("[QuickTask Comment] email OK a",u.email);
+            }catch(e){
+              console.error("[QuickTask Comment] email FAIL",u.email,e);
+            }
+          },0);
+        }
+        if(u.phone){
+          setTimeout(async()=>{
+            try{
+              await sendWhatsAppNotification("quick_task_comment",[u.phone],{
+                userName:u.name,
+                taskId:selectedTask.id,
+                taskTitle:selectedTask.title,
+                commenterName:user.name,
+                commentText:commentPreview,
+                dept:selectedTask.dept,
+              });
+              console.log("[QuickTask Comment] whatsapp OK a",u.phone);
+            }catch(e){
+              console.error("[QuickTask Comment] whatsapp FAIL",u.phone,e);
+            }
+          },0);
+          setTimeout(async()=>{
+            try{
+              await sendSMSNotification("quick_task_comment",[u.phone],{
+                userName:u.name,
+                taskId:selectedTask.id,
+                taskTitle:selectedTask.title,
+                commenterName:user.name,
+                commentText:commentPreview,
+                dept:selectedTask.dept,
+              });
+              console.log("[QuickTask Comment] sms OK a",u.phone);
+            }catch(e){
+              console.error("[QuickTask Comment] sms FAIL",u.phone,e);
+            }
+          },0);
+        }
       });
     }
 
@@ -5478,6 +5512,40 @@ export default function App(){
                 console.log("[QuickTask Create] email OK a",u.email);
               }catch(e){
                 console.error("[QuickTask Create] email FAIL",u.email,e);
+              }
+            },0);
+          }
+          if(u.phone){
+            setTimeout(async()=>{
+              try{
+                await sendWhatsAppNotification("quick_task_created",[u.phone],{
+                  userName:u.name,
+                  taskId:qt.id,
+                  taskTitle:qt.title,
+                  dept:qt.dept,
+                  priority:{1:"Alta",2:"Media",3:"Baja"}[qt.priority]||"—",
+                  creatorName:user.name,
+                  deadline:qt.deadline?new Date(qt.deadline).toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"}):"Sin fecha",
+                });
+                console.log("[QuickTask Create] whatsapp OK a",u.phone);
+              }catch(e){
+                console.error("[QuickTask Create] whatsapp FAIL",u.phone,e);
+              }
+            },0);
+            setTimeout(async()=>{
+              try{
+                await sendSMSNotification("quick_task_created",[u.phone],{
+                  userName:u.name,
+                  taskId:qt.id,
+                  taskTitle:qt.title,
+                  dept:qt.dept,
+                  priority:{1:"Alta",2:"Media",3:"Baja"}[qt.priority]||"—",
+                  creatorName:user.name,
+                  deadline:qt.deadline?new Date(qt.deadline).toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"}):"Sin fecha",
+                });
+                console.log("[QuickTask Create] sms OK a",u.phone);
+              }catch(e){
+                console.error("[QuickTask Create] sms FAIL",u.phone,e);
               }
             },0);
           }

@@ -77,12 +77,15 @@ async function sendEmailDirect(payload: EmailPayload) {
 
 // Función auxiliar para convertir HTML a texto plano
 function htmlToPlainText(html: string): string {
+  console.log("[htmlToPlainText] Input:", typeof html, html?.substring(0, 100));
+
   if (!html || typeof html !== 'string') {
+    console.log("[htmlToPlainText] Input inválido, retornando vacío");
     return '';
   }
 
   try {
-    return html
+    const result = html
       .replace(/<style[^>]*>.*?<\/style>/gi, '')
       .replace(/<script[^>]*>.*?<\/script>/gi, '')
       .replace(/<[^>]+>/g, '')
@@ -94,19 +97,27 @@ function htmlToPlainText(html: string): string {
       .replace(/&#39;/g, "'")
       .replace(/\n\s*\n\s*\n/g, '\n\n')
       .trim();
-  } catch (err) {
-    console.error("[send-email] Error en htmlToPlainText:", err);
+    console.log("[htmlToPlainText] Output exitoso, length:", result.length);
+    return result;
+  } catch (err: any) {
+    console.error("[htmlToPlainText] ❌ Error:", err.message);
+    console.error("[htmlToPlainText] Stack:", err.stack);
     return String(html);
   }
 }
 
 function emailTemplate(title: string, body: string, taskId?: string, taskTitle?: string, avisoId?: string) {
-  const linkHref = taskId
-    ? `https://taskops-kappa.vercel.app/?task=${taskId}`
-    : avisoId
-    ? `https://taskops-kappa.vercel.app/?aviso=${avisoId}`
-    : null;
-  const linkLabel = taskId ? `Ver tarea ${taskId} →` : "Ver aviso →";
+  try {
+    console.log("[emailTemplate] Generando template - title:", title, "avisoId:", avisoId);
+
+    const linkHref = taskId
+      ? `https://taskops-kappa.vercel.app/?task=${taskId}`
+      : avisoId
+      ? `https://taskops-kappa.vercel.app/?aviso=${avisoId}`
+      : null;
+    const linkLabel = taskId ? `Ver tarea ${taskId} →` : "Ver aviso →";
+
+    console.log("[emailTemplate] linkHref:", linkHref);
 
   const html = `
   <!DOCTYPE html>
@@ -134,8 +145,9 @@ function emailTemplate(title: string, body: string, taskId?: string, taskTitle?:
   </body>
   </html>`;
 
-  // Generar versión texto plano
-  const text = `
+    // Generar versión texto plano
+    console.log("[emailTemplate] Generando texto plano...");
+    const text = `
 NEXUS | Fine Pitch de México
 ────────────────────────────────
 
@@ -147,9 +159,14 @@ ${linkHref ? `\n${linkLabel}\n${linkHref}\n` : ''}
 
 ────────────────────────────────
 Este es un mensaje automático de NEXUS. No respondas a este correo.
-  `.trim();
+    `.trim();
 
-  return { html, text };
+    console.log("[emailTemplate] Template generado exitosamente");
+    return { html, text };
+  } catch (err: any) {
+    console.error("[emailTemplate] Error generando template:", err);
+    throw err;
+  }
 }
 
 serve(async (req) => {
@@ -164,6 +181,11 @@ serve(async (req) => {
 
   try {
     const { type, to, data } = await req.json();
+
+    // LOG COMPLETO DEL PAYLOAD RECIBIDO
+    console.log("[send-email] ========================================");
+    console.log("[send-email] Payload completo recibido:", JSON.stringify({ type, to, data }, null, 2));
+    console.log("[send-email] ========================================");
     console.log(`[Email] Received request - type: ${type}, recipients: ${to?.length || 0}`);
 
     if (!to || !to.length) {
@@ -244,29 +266,66 @@ serve(async (req) => {
         break;
 
       case "aviso": {
-        const textoSafe = String(data.texto || "");
-        const textoPreview = textoSafe.length > 50 ? textoSafe.slice(0, 50) + "..." : textoSafe;
-        // Escapar HTML en data.texto para evitar XSS y errores de parsing
-        const textoEscaped = textoSafe
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/"/g, '&quot;')
-          .replace(/'/g, '&#39;');
+        try {
+          console.log("[send-email] Procesando case 'aviso'...");
+          console.log("[send-email] data.texto:", data.texto, "type:", typeof data.texto);
+          console.log("[send-email] data.fromName:", data.fromName);
+          console.log("[send-email] data.fromDept:", data.fromDept);
+          console.log("[send-email] data.userName:", data.userName);
+          console.log("[send-email] data.avisoId:", data.avisoId);
 
-        subject = `Aviso de ${data.fromName}: ${textoPreview}`;
-        const template4 = emailTemplate(
-          `Aviso de ${data.fromName} (${data.fromDept})`,
-          `<p>Hola <strong>${data.userName}</strong>,</p>
-           <p>Tienes un nuevo aviso:</p>
-           <div style="background:#FFFBEB;border-left:3px solid #F59E0B;padding:14px 16px;border-radius:4px;color:#78350F;line-height:1.7;">${textoEscaped}</div>`,
-          undefined,
-          undefined,
-          data.avisoId
-        );
-        htmlBody = template4.html;
-        textBody = template4.text;
-        break;
+          const textoSafe = String(data.texto || "");
+          console.log("[send-email] textoSafe:", textoSafe);
+
+          const textoPreview = textoSafe.length > 50 ? textoSafe.slice(0, 50) + "..." : textoSafe;
+          console.log("[send-email] textoPreview:", textoPreview);
+
+          // Escapar HTML en data.texto para evitar XSS y errores de parsing
+          const textoEscaped = textoSafe
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+          console.log("[send-email] textoEscaped:", textoEscaped);
+
+          subject = `Aviso de ${data.fromName}: ${textoPreview}`;
+          console.log("[send-email] subject generado:", subject);
+
+          const template4 = emailTemplate(
+            `Aviso de ${data.fromName} (${data.fromDept})`,
+            `<p>Hola <strong>${data.userName}</strong>,</p>
+             <p>Tienes un nuevo aviso:</p>
+             <div style="background:#FFFBEB;border-left:3px solid #F59E0B;padding:14px 16px;border-radius:4px;color:#78350F;line-height:1.7;">${textoEscaped}</div>`,
+            undefined,
+            undefined,
+            data.avisoId
+          );
+          console.log("[send-email] template generado exitosamente");
+
+          htmlBody = template4.html;
+          textBody = template4.text;
+          console.log("[send-email] htmlBody y textBody asignados");
+          break;
+        } catch (avisoError: any) {
+          console.error("[send-email] ❌ ERROR en case 'aviso':", avisoError);
+          console.error("[send-email] Error stack:", avisoError.stack);
+          console.error("[send-email] Error message:", avisoError.message);
+
+          // Retornar 200 con detalles del error para debugging
+          return new Response(JSON.stringify({
+            error: "Error procesando aviso",
+            details: avisoError.message,
+            stack: avisoError.stack,
+            data: data
+          }), {
+            status: 200, // Cambiado a 200 para que llegue al frontend
+            headers: {
+              "Content-Type": "application/json",
+              "Access-Control-Allow-Origin": "*",
+            },
+          });
+        }
       }
 
       case "tarea_vencida":

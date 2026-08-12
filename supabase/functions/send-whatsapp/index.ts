@@ -115,6 +115,14 @@ serve(async (req) => {
           );
           break;
 
+        case "quick_task_created":
+          message = `⚡ *Nueva tarea rápida asignada*\nHola ${data.userName}:\n\n📋 *${data.taskTitle}*\n🔖 Prioridad: ${data.priority}\n👤 Asignada por: ${data.creatorName}\n🏢 Departamento: ${data.dept}\n${data.deadline ? `📅 Fecha límite: ${data.deadline}\n` : ''}\n🔗 Ver tarea: ${APP}/?quickTask=${data.taskId}`;
+          break;
+
+        case "quick_task_comment":
+          message = `💬 *Nuevo comentario en tarea rápida*\nHola ${data.userName}:\n\n📋 *${data.taskTitle}*\n👤 ${data.commenterName}: "${data.commentText}"\n🏢 ${data.dept}\n\n👁️ Ver tarea: ${APP}/?quickTask=${data.taskId}`;
+          break;
+
         default:
           return new Response(JSON.stringify({ error: "Unknown type" }), { status: 400, headers: corsHeaders });
       }
