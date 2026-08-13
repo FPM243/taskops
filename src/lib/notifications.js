@@ -23,41 +23,118 @@ function urlBase64ToUint8Array(base64String) {
 // ════════════════════════════════════════
 
 export async function registerPush(user) {
-  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    console.log("[Push] Service Worker o PushManager no disponible");
+    return;
+  }
+
   try {
     const permission = await Notification.requestPermission();
     if (permission === "denied") {
       console.warn("[Push] Permiso denegado permanentemente para:", user.name);
       return;
     }
-    if (permission !== "granted") return;
+    if (permission !== "granted") {
+      console.log("[Push] Permiso no concedido, estado:", permission);
+      return;
+    }
+
     // Registrar SW y esperar al registration activo antes de suscribir
     const swReg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
     console.log("[Push] SW registrado:", swReg.scope);
     const readyReg = await navigator.serviceWorker.ready;
     console.log("[Push] SW activo:", readyReg.active?.scriptURL);
-    const subscription = await readyReg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
-    });
+
+    // Verificar si ya existe una subscription
+    let subscription = await readyReg.pushManager.getSubscription();
+    let isNewSubscription = false;
+
+    if (!subscription) {
+      // No hay subscription, crear una nueva
+      console.log("[Push] No hay subscription existente, creando nueva...");
+      subscription = await readyReg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+      });
+      isNewSubscription = true;
+    } else {
+      console.log("[Push] Subscription existente encontrada");
+    }
+
     const subJson = typeof subscription.toJSON === "function"
       ? subscription.toJSON()
       : JSON.parse(JSON.stringify(subscription));
+
     if (!subJson?.endpoint) {
       console.error("[Push] Subscription inválida — sin endpoint");
       return;
     }
-    const { error } = await supabase.from("push_tokens").upsert({
-      id: String(user.id),
-      user_name: user.name,
-      dept: user.dept,
-      subscription: subJson,
-      updated_at: new Date().toISOString(),
-    });
-    if (error) console.error("[Push] Error guardando subscription:", error.message);
-    else console.log("[Push] Subscription registrada para:", user.name);
+
+    // Verificar si el token en la BD es diferente al actual
+    const { data: existingToken } = await supabase
+      .from("push_tokens")
+      .select("subscription, needs_reregister")
+      .eq("id", String(user.id))
+      .single();
+
+    let needsUpdate = isNewSubscription;
+
+    if (existingToken) {
+      const existingEndpoint = existingToken.subscription?.endpoint;
+      const currentEndpoint = subJson.endpoint;
+
+      if (existingEndpoint !== currentEndpoint) {
+        console.log("[Push] Token cambió, actualizando...");
+        console.log("[Push]   Anterior:", existingEndpoint?.substring(0, 50) + "...");
+        console.log("[Push]   Nuevo:", currentEndpoint?.substring(0, 50) + "...");
+        needsUpdate = true;
+      } else if (existingToken.needs_reregister) {
+        console.log("[Push] Token marcado para re-registro, actualizando...");
+        needsUpdate = true;
+      } else {
+        console.log("[Push] Token actual válido, no requiere actualización");
+        return;
+      }
+    } else {
+      console.log("[Push] No hay token previo en BD, registrando nuevo...");
+      needsUpdate = true;
+    }
+
+    if (needsUpdate) {
+      const { error } = await supabase.from("push_tokens").upsert({
+        id: String(user.id),
+        user_name: user.name,
+        dept: user.dept,
+        subscription: subJson,
+        needs_reregister: false, // Limpiar flag de re-registro
+        updated_at: new Date().toISOString(),
+      });
+
+      if (error) {
+        console.error("[Push] Error guardando subscription:", error.message);
+      } else {
+        console.log("[Push] ✓ Subscription registrada/actualizada para:", user.name);
+      }
+    }
   } catch (err) {
-    console.error("[Push] Error al registrar push:", err.message);
+    console.error("[Push] Error al registrar push:", err.message, err);
+
+    // Si el error es de subscription inválida, intentar limpiar y re-registrar
+    if (err.name === "InvalidStateError" || err.message?.includes("subscription")) {
+      try {
+        console.log("[Push] Intentando limpiar subscription inválida...");
+        const swReg = await navigator.serviceWorker.ready;
+        const oldSub = await swReg.pushManager.getSubscription();
+        if (oldSub) {
+          await oldSub.unsubscribe();
+          console.log("[Push] Subscription antigua eliminada, reintentando...");
+          // Reintentar una vez
+          setTimeout(() => registerPush(user), 1000);
+        }
+      } catch (cleanupErr) {
+        console.error("[Push] Error limpiando subscription:", cleanupErr.message);
+      }
+    }
   }
 }
 

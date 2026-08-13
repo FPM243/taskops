@@ -70,19 +70,36 @@ self.addEventListener('fetch', event => {
 });
 
 self.addEventListener('push', function(event) {
-  const data = event.data ? event.data.json() : {};
-  const title = data.title || 'NEXUS';
-  const options = {
-    body: data.body || 'Nueva notificación',
-    icon: '/favicon.svg',
-    badge: '/favicon.svg',
-    data: { url: data.url || '/' },
-    vibrate: [200, 100, 200],
-    requireInteraction: true,
-    tag: 'taskops-' + Date.now(),
-    renotify: true,
-  };
-  event.waitUntil(self.registration.showNotification(title, options));
+  // Verificar si la API de notificaciones está disponible (puede no estarlo en iOS antiguo)
+  if (!self.registration.showNotification) {
+    console.warn('[SW] showNotification no disponible en este navegador');
+    return;
+  }
+
+  try {
+    const data = event.data ? event.data.json() : {};
+    const title = data.title || 'NEXUS';
+    const options = {
+      body: data.body || 'Nueva notificación',
+      icon: '/favicon.svg',
+      badge: '/favicon.svg',
+      data: { url: data.url || '/' },
+      vibrate: [200, 100, 200],
+      requireInteraction: true,
+      tag: 'taskops-' + Date.now(),
+      renotify: true,
+    };
+
+    event.waitUntil(
+      self.registration.showNotification(title, options).catch(err => {
+        console.error('[SW] Error mostrando notificación:', err);
+        // Si falla (por ejemplo, permiso revocado), no hacer nada
+        // El token será eliminado por send-push en el próximo intento
+      })
+    );
+  } catch (err) {
+    console.error('[SW] Error procesando evento push:', err);
+  }
 });
 
 self.addEventListener('notificationclick', function(event) {
