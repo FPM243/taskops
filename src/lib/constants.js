@@ -54,7 +54,7 @@ export const USERS_BY_DEPT = DEPTS.map(dept=>({dept,users:USERS.filter(u=>u.dept
 // ids que cada departamento puede seleccionar como responsable
 export const ASSIGN_MATRIX = {
   "Dirección":  null,        // null = todos
-  "Ingenieria": [9, 20],     // SMT, Aux. Ingeniería
+  "Ingenieria": [2, 9, 20],  // Gte. Ingeniería, SMT, Aux. Ingeniería
   "Calidad":    [8, 11, 12], // Mantenimiento, Auxiliar calidad, Inspector calidad
   "Producción":  [13, 14, 15],// Supervisores V, N, E
   "Logistica/IT":[16],        // Almacén

@@ -2565,9 +2565,19 @@ function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDe
                 {selectedTask.deadline&&<Badge ch={`📅 ${new Date(selectedTask.deadline).toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"})}`} c={T2} bg={BG}/>}
               </div>
               <div style={{marginTop:8,fontSize:11,color:T3}}>
-                {selectedTask.assignedToId?(
+                {selectedTask.assignedUserIds?.length>0?(
+                  <>
+                    Asignados ({selectedTask.assignedUserIds.length}):
+                    <strong>
+                      {selectedTask.assignedUserIds
+                        .map(id=>USERS.find(u=>u.id===id)?.name)
+                        .filter(Boolean)
+                        .join(", ")}
+                    </strong> •
+                  </>
+                ):(selectedTask.assignedToId?(
                   <>Asignada a: <strong>{USERS.find(u=>u.id===selectedTask.assignedToId)?.name||"—"}</strong> • </>
-                ):null}
+                ):null)}
                 Creada por: {selectedTask.createdBy?.name||"—"}
               </div>
             </div>
@@ -2769,11 +2779,18 @@ function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDe
                           <Badge ch={priorityLabel(task.priority)} c={priorityColor(task.priority)} bg={priorityColor(task.priority)+"15"}/>
                           <Badge ch={task.status} c={statusColor(task.status)} bg={statusColor(task.status)+"15"}/>
                           {task.deadline&&<Badge ch={new Date(task.deadline).toLocaleDateString("es-MX",{day:"2-digit",month:"short"})} c={T3} bg={BG}/>}
-                          {task.assignedToId?(
+                          {task.assignedUserIds?.length>0?(
+                            <span style={{fontSize:10,color:T3}}>
+                              → {task.assignedUserIds
+                                .map(id=>USERS.find(u=>u.id===id)?.name)
+                                .filter(Boolean)
+                                .join(", ")}
+                            </span>
+                          ):(task.assignedToId?(
                             <span style={{fontSize:10,color:T3}}>→ {USERS.find(u=>u.id===task.assignedToId)?.name||"—"}</span>
                           ):(
                             <span style={{fontSize:10,color:T3}}>Por: {task.createdBy?.name||"—"}</span>
-                          )}
+                          ))}
                         </div>
                       </div>
                       <div style={{display:"flex",flexDirection:"column",gap:4}}>
@@ -2805,11 +2822,18 @@ function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDe
                       <Badge ch={priorityLabel(task.priority)} c={priorityColor(task.priority)} bg={priorityColor(task.priority)+"15"}/>
                       <Badge ch={task.status} c={statusColor(task.status)} bg={statusColor(task.status)+"15"}/>
                       {task.deadline&&<Badge ch={new Date(task.deadline).toLocaleDateString("es-MX",{day:"2-digit",month:"short"})} c={T3} bg={BG}/>}
-                      {task.assignedToId?(
+                      {task.assignedUserIds?.length>0?(
+                        <span style={{fontSize:10,color:T3}}>
+                          → {task.assignedUserIds
+                            .map(id=>USERS.find(u=>u.id===id)?.name)
+                            .filter(Boolean)
+                            .join(", ")}
+                        </span>
+                      ):(task.assignedToId?(
                         <span style={{fontSize:10,color:T3}}>→ {USERS.find(u=>u.id===task.assignedToId)?.name||"—"}</span>
                       ):(
                         <span style={{fontSize:10,color:T3}}>Por: {task.createdBy?.name||"—"}</span>
-                      )}
+                      ))}
                     </div>
                   </div>
                   {canEdit(task)&&(
@@ -2840,7 +2864,7 @@ function QuickTaskForm({user,task,onSave,onCancel}){
   const [description,setDescription]=useState(task?.description||"");
   const [priority,setPriority]=useState(task?.priority||2);
   const [deadline,setDeadline]=useState(task?.deadline?task.deadline.split("T")[0]:"");
-  const [assignedToId,setAssignedToId]=useState(task?.assignedToId||"");
+  const [assignedUserIds,setAssignedUserIds]=useState(task?.assignedUserIds||[]);
   const [dept,setDept]=useState(task?.dept||"");
   const [saving,setSaving]=useState(false);
   const [error,setError]=useState(null);
@@ -2848,14 +2872,32 @@ function QuickTaskForm({user,task,onSave,onCancel}){
 
   const isDireccion=user?.dept==="Dirección";
 
+  // Filtrar usuarios disponibles según ASSIGN_MATRIX
+  const availableUsers=useMemo(()=>{
+    const userDept=user?.dept;
+    if(!userDept) return [];
+
+    const allowedIds=ASSIGN_MATRIX[userDept];
+
+    // Dirección puede asignar a todos
+    if(allowedIds===null) return USERS;
+
+    // Si el dept tiene ASSIGN_MATRIX, filtrar por esos IDs
+    if(allowedIds) return USERS.filter(u=>allowedIds.includes(u.id));
+
+    // Si no está en ASSIGN_MATRIX, mostrar solo usuarios del mismo dept
+    return USERS.filter(u=>u.dept===userDept);
+  },[user]);
+
   // Calcular destinatarios en tiempo real
   const recipients=useMemo(()=>{
-    if(!assignedToId) return [];
-    const assignedUser=USERS.find(u=>u.id===Number(assignedToId));
-    if(!assignedUser) return [];
+    if(assignedUserIds.length===0) return [];
 
-    // Usuario asignado (si no es el creador)
-    const assigned=assignedUser.id!==user?.id?[assignedUser]:[];
+    // Usuarios asignados (excepto el creador)
+    const assigned=assignedUserIds
+      .map(id=>USERS.find(u=>u.id===id))
+      .filter(Boolean)
+      .filter(u=>u.id!==user?.id);
 
     // Todos de Dirección (excepto el creador)
     const direccionUsers=USERS.filter(u=>u.dept==="Dirección"&&u.id!==user?.id);
@@ -2867,31 +2909,45 @@ function QuickTaskForm({user,task,onSave,onCancel}){
     },[]);
 
     return uniqueRecipients;
-  },[assignedToId,user]);
+  },[assignedUserIds,user]);
 
   const handleSave=()=>{
     if(!title.trim()){
       setError("El título es obligatorio");
       return;
     }
-    if(!assignedToId){
-      setError("Debes asignar la tarea a un usuario");
+    if(assignedUserIds.length===0){
+      setError("Debes asignar la tarea a al menos un usuario");
       return;
     }
     setSaving(true);
-    const assignedUser=USERS.find(u=>u.id===Number(assignedToId));
+
+    // Determinar departamento del primer usuario asignado
+    const firstUser=USERS.find(u=>u.id===assignedUserIds[0]);
+
     const data={
       title:title.trim(),
       description:description.trim(),
       priority,
       deadline:deadline?new Date(deadline+"T00:00:00").toISOString():null,
-      assignedToId:Number(assignedToId),
-      dept:assignedUser?.dept||""
+      assignedUserIds:assignedUserIds,
+      assignedToId:assignedUserIds[0],  // Compatibilidad temporal
+      dept:firstUser?.dept||user?.dept||""
     };
     setTimeout(()=>{
       onSave(data);
       setSaving(false);
     },100);
+  };
+
+  const toggleUser=(userId)=>{
+    setAssignedUserIds(prev=>{
+      if(prev.includes(userId)){
+        return prev.filter(id=>id!==userId);
+      }else{
+        return [...prev,userId];
+      }
+    });
   };
 
   return(
@@ -2933,27 +2989,48 @@ function QuickTaskForm({user,task,onSave,onCancel}){
             </div>
           </div>
 
-          {/* Asignar a usuario - LISTA PLANA */}
+          {/* Asignar a usuarios - CHECKBOXES */}
           <div style={{marginBottom:16}}>
-            <label style={{fontSize:14,fontWeight:700,color:T1,marginBottom:8,display:"block"}}>Asignar a: *</label>
-            <select value={assignedToId} onChange={e=>{
-              const uid=Number(e.target.value);
-              setAssignedToId(uid);
-              if(uid){
-                const selectedUser=USERS.find(u=>u.id===uid);
-                setDept(selectedUser?.dept||"");
-              }
-            }}
-              style={{width:"100%",padding:12,borderRadius:8,border:`2px solid ${BD}`,fontSize:14,background:CARD,color:T1,fontWeight:600}}>
-              <option value="">Selecciona un usuario...</option>
-              {USERS.map(u=>(
-                <option key={u.id} value={u.id}>{u.name}</option>
-              ))}
-            </select>
+            <label style={{fontSize:14,fontWeight:700,color:T1,marginBottom:8,display:"block"}}>
+              Asignar a: * ({assignedUserIds.length} seleccionado{assignedUserIds.length!==1?"s":""})
+            </label>
+            <div style={{maxHeight:300,overflowY:"auto",border:`1px solid ${BD}`,borderRadius:8,background:CARD}}>
+              {availableUsers.map(u=>{
+                const isSelected=assignedUserIds.includes(u.id);
+                return(
+                  <div key={u.id} onClick={()=>toggleUser(u.id)}
+                    style={{
+                      display:"flex",alignItems:"center",gap:10,
+                      padding:"10px 12px",
+                      borderBottom:`1px solid ${BD}`,
+                      cursor:"pointer",
+                      background:isSelected?"#EEF2FF":"transparent",
+                      transition:"background .12s"
+                    }}
+                    className="rw">
+                    <input type="checkbox" checked={isSelected} onChange={()=>{}}
+                      style={{width:16,height:16,cursor:"pointer"}}/>
+                    <div style={{
+                      width:32,height:32,borderRadius:"50%",
+                      background:u.uc||"#94A3B8",
+                      color:"#fff",display:"flex",alignItems:"center",
+                      justifyContent:"center",fontSize:11,fontWeight:700,
+                      flexShrink:0
+                    }}>
+                      {u.ini||u.name?.charAt(0)||"?"}
+                    </div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13,fontWeight:600,color:T1}}>{u.name}</div>
+                      <div style={{fontSize:11,color:T3}}>{u.dept}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           {/* Lista de destinatarios en tiempo real */}
-          {assignedToId&&recipients.length>0&&(
+          {assignedUserIds.length>0&&recipients.length>0&&(
             <div style={{marginBottom:20,padding:16,background:"#F0F9FF",border:"2px solid #0EA5E9",borderRadius:8}}>
               <div style={{fontSize:13,fontWeight:700,color:"#0C4A6E",marginBottom:10}}>
                 📋 Recibirán esta tarea ({recipients.length} {recipients.length===1?"persona":"personas"}):
@@ -2981,7 +3058,7 @@ function QuickTaskForm({user,task,onSave,onCancel}){
           )}
 
           {/* Advertencia si asigna a sí mismo */}
-          {assignedToId&&Number(assignedToId)===user?.id&&(
+          {assignedUserIds.includes(user?.id)&&(
             <div style={{marginBottom:16,padding:12,background:"#FFFBEB",border:"2px solid #F59E0B",borderRadius:8,fontSize:12,color:"#92400E",lineHeight:1.6}}>
               ⚠️ <strong>Te estás asignando esta tarea a ti mismo.</strong> Solo recibirás notificación in-app (sin email ni push).
             </div>
@@ -5435,13 +5512,20 @@ export default function App(){
   // OPERACIONES CRUD: QUICK TASKS
   // ════════════════════════════════════════
   const createQuickTask=async data=>{
-    console.log("[QuickTask Create] iniciando", { title: data.title, assignedToId: data.assignedToId, dept: data.dept, priority: data.priority });
+    console.log("[QuickTask Create] iniciando", {
+      title: data.title,
+      assignedUserIds: data.assignedUserIds,
+      assignedToId: data.assignedToId,
+      dept: data.dept,
+      priority: data.priority
+    });
     const now=new Date();
     const qt={
       id:`QT-${now.getTime()}`,
       title:data.title,
       description:data.description||"",
-      assignedToId:data.assignedToId,
+      assignedUserIds:data.assignedUserIds,
+      assignedToId:data.assignedToId,  // Compatibilidad temporal (primer usuario)
       dept:data.dept,
       createdBy:{id:user.id,name:user.name,dept:user.dept},
       status:"Pendiente",
@@ -5462,12 +5546,14 @@ export default function App(){
       setQuickTasks(p=>p.filter(t=>t.id!==qt.id));
     }else{
       console.log("[Supabase] INSERT quick_task ok:",qt.id);
-      // Notificar a: usuario asignado + Dirección (SIEMPRE excluir al creador de push/email)
-      const assignedUser=USERS.find(u=>u.id===qt.assignedToId);
+      // Notificar a: TODOS los usuarios asignados + Dirección (SIEMPRE excluir al creador de push/email)
+      const assignedUsers=qt.assignedUserIds
+        .map(id=>USERS.find(u=>u.id===id))
+        .filter(Boolean);
       const direccionUsers=USERS.filter(u=>u.dept==="Dirección");
 
       // Dedup: combinar asignado + Dirección, excluir creador de push/email
-      const allPotentialRecipients=[assignedUser,...direccionUsers].filter(Boolean);
+      const allPotentialRecipients=[...assignedUsers,...direccionUsers].filter(Boolean);
       const notifyUsers=allPotentialRecipients.reduce((acc,u)=>{
         if(!acc.find(x=>x.id===u.id)&&u.id!==user.id) acc.push(u);
         return acc;
@@ -5477,7 +5563,7 @@ export default function App(){
       const recipientEmails=notifyUsers.filter(u=>u.email).map(u=>u.email);
 
       console.log("[QuickTask Create] destinatarios calculados", {
-        assignedUserId: qt.assignedToId,
+        assignedUserIds: qt.assignedUserIds,
         creatorId: user.id,
         recipientIds: notifyIds,
         recipientEmails,
@@ -5488,7 +5574,13 @@ export default function App(){
       if(notifyIds.length>0){
         (async()=>{
           try{
-            await sendPushNotification(notifyIds,`⚡ Nueva tarea rápida: ${qt.title}`,`Asignada a ${assignedUser?.name||"—"}`,`/?quickTask=${qt.id}`);
+            const assignedNames=assignedUsers.map(au=>au.name).join(", ");
+            await sendPushNotification(
+              notifyIds,
+              `⚡ Nueva tarea rápida: ${qt.title}`,
+              `Asignada a ${assignedNames}`,
+              `/?quickTask=${qt.id}`
+            );
             console.log("[QuickTask Create] push OK a",notifyIds);
           }catch(e){
             console.error("[QuickTask Create] push FAIL",notifyIds,e);
@@ -5504,7 +5596,7 @@ export default function App(){
                   taskTitle:qt.title,
                   taskDescription:qt.description||"Sin descripción",
                   dept:qt.dept,
-                  assignedToName:assignedUser?.name||"—",
+                  assignedToName:assignedUsers.map(au=>au.name).join(", ")||"—",
                   priority:{1:"Alta",2:"Media",3:"Baja"}[qt.priority]||"—",
                   creatorName:user.name,
                   deadline:qt.deadline?new Date(qt.deadline).toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"}):"Sin fecha",
