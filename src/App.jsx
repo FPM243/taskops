@@ -2340,11 +2340,273 @@ function ScreenDeptDetail({dept,tasks,user,onBack,onTaskClick,onNewTask,canAdd,o
 }
 
 /* ════════════════════════════════════════
+   TABLERO DE FOCO - COMPONENTES
+════════════════════════════════════════ */
+
+// Sub-componente: Menu de asignación
+function AssignMenu({members,focusByUser,position,onAssign,onClose}){
+  const isMobile=!position;
+  const menuStyle=isMobile?{
+    position:"fixed",
+    bottom:0,
+    left:0,
+    right:0,
+    background:CARD,
+    border:`1px solid ${BD}`,
+    borderRadius:"16px 16px 0 0",
+    padding:20,
+    boxShadow:SH,
+    zIndex:1000
+  }:{
+    position:"fixed",
+    top:position.y,
+    left:position.x,
+    background:CARD,
+    border:`1px solid ${BD}`,
+    borderRadius:8,
+    padding:12,
+    boxShadow:SH,
+    zIndex:1000,
+    minWidth:200
+  };
+
+  return(
+    <>
+      {/* Overlay */}
+      <div onClick={onClose} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.3)",zIndex:999}}/>
+
+      {/* Menu */}
+      <div style={menuStyle}>
+        <div style={{fontSize:12,fontWeight:600,color:T1,marginBottom:12}}>
+          ¿Quién trabaja en esto?
+        </div>
+        {members.map(m=>{
+          const count=focusByUser[m.id]?.length||0;
+          const atLimit=count>=3;
+          return(
+            <button key={m.id} onClick={()=>!atLimit&&onAssign(m.id)}
+              disabled={atLimit}
+              style={{display:"block",width:"100%",textAlign:"left",background:atLimit?BD:BG,border:`1px solid ${BD}`,padding:"8px 12px",marginBottom:6,borderRadius:6,cursor:atLimit?"not-allowed":"pointer",fontSize:11,color:atLimit?T3:T1}}>
+              {m.name} <span style={{color:T3}}>({count}/3)</span>
+            </button>
+          );
+        })}
+        <button onClick={onClose}
+          style={{marginTop:8,width:"100%",background:CARD,border:`1px solid ${BD}`,padding:"8px",borderRadius:6,cursor:"pointer",fontSize:11,color:T2}}>
+          Cancelar
+        </button>
+      </div>
+    </>
+  );
+}
+
+// Sub-componente: Columnas de foco
+function FocusColumns({members,focusByUser,onRelease}){
+  return(
+    <div style={{display:"grid",gridTemplateColumns:`repeat(${members.length},1fr)`,gap:12}}>
+      {members.map(member=>{
+        const tasks=focusByUser[member.id]||[];
+        const atLimit=tasks.length>=3;
+        return(
+          <div key={member.id} style={{background:CARD,border:`1px solid ${BD}`,borderRadius:8,padding:12}}>
+            {/* Header */}
+            <div style={{fontSize:12,fontWeight:600,color:T1,marginBottom:8,textAlign:"center"}}>
+              {member.name}
+            </div>
+            <div style={{fontSize:10,color:atLimit?"#DC2626":T3,textAlign:"center",marginBottom:12}}>
+              {tasks.length}/3 tareas
+            </div>
+
+            {/* Tareas en foco */}
+            {tasks.length===0&&<div style={{fontSize:10,color:T3,fontStyle:"italic",textAlign:"center",padding:16}}>
+              Sin tareas en foco
+            </div>}
+            {tasks.map(t=>(
+              <div key={t.id} style={{background:BG,border:`1px solid ${BD}`,borderLeft:`3px solid ${PR}`,padding:8,marginBottom:6,borderRadius:6,position:"relative"}}>
+                <div style={{fontSize:11,fontWeight:500,color:T1,marginBottom:4,paddingRight:20}}>{t.title}</div>
+                <div style={{fontSize:9,color:T3}}>{({1:"Alta",2:"Media",3:"Baja"})[t.priority]||"Media"}</div>
+                {/* Botón soltar */}
+                <button onClick={()=>onRelease(t.id)}
+                  style={{position:"absolute",top:4,right:4,background:"transparent",border:"none",color:T3,cursor:"pointer",fontSize:14,padding:0,width:16,height:16,display:"flex",alignItems:"center",justifyContent:"center"}}
+                  title="Soltar foco">
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Sub-componente: Lista de tareas
+function TaskList({tasks,onTaskClick}){
+  if(tasks.length===0){
+    return <div style={{fontSize:12,color:T3,fontStyle:"italic",textAlign:"center",padding:40}}>
+      No hay tareas activas
+    </div>;
+  }
+  return tasks.map(t=>(
+    <div key={t.id} onClick={(e)=>onTaskClick(t,e)}
+      style={{background:CARD,border:`1px solid ${BD}`,borderLeft:`4px solid ${DEPT_COLORS[t.dept]||PR}`,padding:12,marginBottom:8,borderRadius:8,cursor:"pointer",transition:"all .12s"}}
+      onMouseEnter={(e)=>e.currentTarget.style.boxShadow=SH}
+      onMouseLeave={(e)=>e.currentTarget.style.boxShadow="none"}>
+      <div style={{fontSize:13,fontWeight:600,color:T1,marginBottom:4}}>{t.title}</div>
+      <div style={{fontSize:11,color:T3}}>
+        {({1:"Alta",2:"Media",3:"Baja"})[t.priority]||"Media"} • {t.status}
+        {t.focusUserId&&<span style={{marginLeft:8,color:PR}}>
+          📌 {USERS.find(u=>u.id===t.focusUserId)?.name}
+        </span>}
+      </div>
+    </div>
+  ));
+}
+
+// Componente principal: Tablero de Foco
+function FocusBoard({user,quickTasks,onUpdateTask}){
+  const [showAssignMenu,setShowAssignMenu]=useState(null); // {taskId, x, y}
+  const isMobile=useIsMobile();
+
+  // Dirección: mensaje próximamente
+  if(user?.dept==="Dirección"){
+    return(
+      <div style={{textAlign:"center",padding:60}}>
+        <div style={{fontSize:16,fontWeight:600,color:T1,marginBottom:8}}>
+          📌 Tablero de foco por departamento
+        </div>
+        <div style={{fontSize:13,color:T3}}>
+          Próximamente
+        </div>
+      </div>
+    );
+  }
+
+  // 1. Miembros del departamento (usando ASSIGN_MATRIX)
+  const deptMembers=useMemo(()=>{
+    const userDept=user?.dept;
+    const allowedIds=ASSIGN_MATRIX[userDept];
+    if(allowedIds===null) return USERS; // Dirección ve todos
+    if(allowedIds){
+      // IDs del ASSIGN_MATRIX + el propio usuario
+      const allIds=[...new Set([user.id,...allowedIds])];
+      return USERS.filter(u=>allIds.includes(u.id));
+    }
+    return USERS.filter(u=>u.dept===userDept);
+  },[user]);
+
+  // 2. Tareas activas: incluir tareas donde cualquier miembro del departamento esté asignado
+  const activeTasks=useMemo(()=>{
+    const deptMemberIds=deptMembers.map(m=>m.id);
+    return quickTasks.filter(t=>
+      !t.deleted&&
+      t.status!=="Completada"&&
+      (t.assignedUserIds?.some(id=>deptMemberIds.includes(id))||t.dept===user?.dept)
+    ).sort((a,b)=>a.priority-b.priority);
+  },[quickTasks,user?.dept,deptMembers]);
+
+  // 3. Tareas en foco por usuario
+  const focusByUser=useMemo(()=>{
+    const map={};
+    deptMembers.forEach(member=>{
+      map[member.id]=quickTasks.filter(t=>t.focusUserId===member.id&&!t.deleted);
+    });
+    return map;
+  },[quickTasks,deptMembers]);
+
+  // 4. Asignar foco a un usuario
+  const handleAssignFocus=(taskId,userId)=>{
+    const currentFocusCount=focusByUser[userId]?.length||0;
+    if(currentFocusCount>=3){
+      alert(`${USERS.find(u=>u.id===userId)?.name} ya tiene 3 tareas en foco. Debe soltar una primero.`);
+      return;
+    }
+    onUpdateTask(taskId,{focusUserId:userId});
+    setShowAssignMenu(null);
+  };
+
+  // 5. Soltar foco
+  const handleReleaseFocus=(taskId)=>{
+    onUpdateTask(taskId,{focusUserId:null});
+  };
+
+  // 6. Mobile: tabs para alternar
+  const [mobileTab,setMobileTab]=useState("tasks"); // "tasks" | "board"
+
+  if(isMobile){
+    return(
+      <div>
+        {/* Tabs mobile */}
+        <div style={{display:"flex",gap:8,marginBottom:16}}>
+          <button onClick={()=>setMobileTab("tasks")}
+            style={{flex:1,background:mobileTab==="tasks"?PR:CARD,color:mobileTab==="tasks"?"#fff":T2,border:`1px solid ${BD}`,padding:"10px",borderRadius:8,fontSize:12,fontWeight:600}}>
+            Tareas ({activeTasks.length})
+          </button>
+          <button onClick={()=>setMobileTab("board")}
+            style={{flex:1,background:mobileTab==="board"?PR:CARD,color:mobileTab==="board"?"#fff":T2,border:`1px solid ${BD}`,padding:"10px",borderRadius:8,fontSize:12,fontWeight:600}}>
+            Foco del equipo
+          </button>
+        </div>
+
+        {mobileTab==="tasks"?(
+          <TaskList tasks={activeTasks} onTaskClick={(t)=>setShowAssignMenu({taskId:t.id})} />
+        ):(
+          <FocusColumns members={deptMembers} focusByUser={focusByUser} onRelease={handleReleaseFocus} />
+        )}
+
+        {/* Menu asignar */}
+        {showAssignMenu&&(
+          <AssignMenu
+            members={deptMembers}
+            focusByUser={focusByUser}
+            onAssign={(userId)=>handleAssignFocus(showAssignMenu.taskId,userId)}
+            onClose={()=>setShowAssignMenu(null)}
+          />
+        )}
+      </div>
+    );
+  }
+
+  // Desktop: dos columnas
+  return(
+    <div style={{display:"grid",gridTemplateColumns:"40% 60%",gap:24}}>
+      {/* Columna izquierda: lista de tareas */}
+      <div>
+        <h3 style={{fontSize:14,fontWeight:600,color:T1,marginBottom:12}}>
+          Tareas activas ({activeTasks.length})
+        </h3>
+        <TaskList tasks={activeTasks} onTaskClick={(t,e)=>setShowAssignMenu({taskId:t.id,x:e.clientX,y:e.clientY})} />
+      </div>
+
+      {/* Columna derecha: tablero de foco */}
+      <div>
+        <h3 style={{fontSize:14,fontWeight:600,color:T1,marginBottom:12}}>
+          Foco del equipo
+        </h3>
+        <FocusColumns members={deptMembers} focusByUser={focusByUser} onRelease={handleReleaseFocus} />
+      </div>
+
+      {/* Menu asignar (desktop: posicionado absoluto) */}
+      {showAssignMenu&&(
+        <AssignMenu
+          members={deptMembers}
+          focusByUser={focusByUser}
+          position={{x:showAssignMenu.x,y:showAssignMenu.y}}
+          onAssign={(userId)=>handleAssignFocus(showAssignMenu.taskId,userId)}
+          onClose={()=>setShowAssignMenu(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════
    SCREEN: TAREAS RÁPIDAS
 ════════════════════════════════════════ */
 function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDeleteTask,onRestoreTask}){
   const scrollRef=useScrollRestore("quickTasks");
   const [filter,setFilter]=useState("active"); // "active" | "all" | "pending" | "in_progress" | "completed" | "deleted"
+  const [viewMode,setViewMode]=useState("focus"); // "list" | "focus"
   const [selectedTask,setSelectedTask]=useState(null);
   const [showCreateForm,setShowCreateForm]=useState(false);
   const [editingTask,setEditingTask]=useState(null);
@@ -2714,22 +2976,32 @@ function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDe
       <div style={{maxWidth:1100,margin:"0 auto",padding:"20px 24px"}}>
         {/* Filtros */}
         <div style={{display:"flex",gap:8,marginBottom:20,flexWrap:"wrap"}}>
+          {/* Botón Foco - primera posición */}
+          <button onClick={()=>setViewMode("focus")}
+            style={{background:viewMode==="focus"?PR:CARD,color:viewMode==="focus"?"#fff":T2,border:`1px solid ${viewMode==="focus"?PR:BD}`,padding:"7px 14px",borderRadius:20,cursor:"pointer",fontSize:12,fontWeight:500,transition:"all .12s"}}>
+            📌 Foco
+          </button>
           {[
-            ["active","Activas"],
             ["all","Todas"],
             ["pending","Pendientes"],
             ["in_progress","En proceso"],
             ["completed","Completadas"],
             ["deleted","Eliminadas"]
           ].map(([v,l])=>(
-            <button key={v} onClick={()=>setFilter(v)}
-              style={{background:filter===v?PR:CARD,color:filter===v?"#fff":T2,border:`1px solid ${filter===v?PR:BD}`,padding:"7px 14px",borderRadius:20,cursor:"pointer",fontSize:12,fontWeight:500,transition:"all .12s"}}>
+            <button key={v} onClick={()=>{setFilter(v);setViewMode("list");}}
+              style={{background:filter===v&&viewMode==="list"?PR:CARD,color:filter===v&&viewMode==="list"?"#fff":T2,border:`1px solid ${filter===v&&viewMode==="list"?PR:BD}`,padding:"7px 14px",borderRadius:20,cursor:"pointer",fontSize:12,fontWeight:500,transition:"all .12s"}}>
               {l}
             </button>
           ))}
         </div>
 
-        {/* Lista de tareas */}
+        {/* Vista según viewMode */}
+        {viewMode==="focus"?(
+          // Tablero de Foco
+          <FocusBoard user={user} quickTasks={quickTasks} onUpdateTask={onUpdateTask} />
+        ):(
+          // Lista de tareas
+          <>
         {filter==="deleted"?(
           // Vista de eliminadas
           <div>
@@ -2852,6 +3124,8 @@ function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDe
               </Card>
             ))}
           </div>
+        )}
+          </>
         )}
       </div>
     </div>
