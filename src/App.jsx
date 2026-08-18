@@ -2603,11 +2603,11 @@ function FocusBoard({user,quickTasks,onUpdateTask}){
 /* ════════════════════════════════════════
    SCREEN: TAREAS RÁPIDAS
 ════════════════════════════════════════ */
-function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDeleteTask,onRestoreTask}){
+function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDeleteTask,onRestoreTask,initialSelected}){
   const scrollRef=useScrollRestore("quickTasks");
   const [filter,setFilter]=useState("active"); // "active" | "all" | "pending" | "in_progress" | "completed" | "deleted"
   const [viewMode,setViewMode]=useState("focus"); // "list" | "focus"
-  const [selectedTask,setSelectedTask]=useState(null);
+  const [selectedTask,setSelectedTask]=useState(initialSelected||null);
   const [showCreateForm,setShowCreateForm]=useState(false);
   const [editingTask,setEditingTask]=useState(null);
   const [commentText,setCommentText]=useState("");
@@ -4947,6 +4947,7 @@ export default function App(){
   const [selDept,     setSelDept]    = useState(null);
   const [selTask,     setSelTask]    = useState(null);
   const [selAviso,    setSelAviso]   = useState(null);
+  const [selQuickTask,setSelQuickTask]=useState(null);
   const [fromScr,     setFromScr]    = useState("dash");
   const [filter,      setFilter]     = useState(null);
   const [authedDepts, setAuthedDepts]= useState(()=>{try{return JSON.parse(sessionStorage.getItem("taskops_authed_depts"))||[];}catch{return [];}});
@@ -5372,6 +5373,19 @@ export default function App(){
     setSelAviso(aviso);
     setScreen("avisos");
   },[dbReady,avisos]); // eslint-disable-line
+
+  // Deep-link: abrir quick task desde URL ?quickTask=
+  useEffect(()=>{
+    if(!dbReady||!quickTasks.length) return;
+    const params=new URLSearchParams(window.location.search);
+    const quickTaskId=params.get("quickTask");
+    if(!quickTaskId) return;
+    const task=quickTasks.find(t=>t.id===quickTaskId);
+    if(!task) return;
+    window.history.replaceState({},"",window.location.pathname);
+    setSelQuickTask(task);
+    setScreen("quickTasks");
+  },[dbReady,quickTasks]); // eslint-disable-line
 
   // Operaciones CRUD
   const updateTask=(id,patch)=>{
@@ -6092,7 +6106,7 @@ export default function App(){
 
   if(screen==="ausencias") return <RealtimeContext.Provider value={realtimeContextValue}><style>{CSS}</style><ScreenAusencias user={user} ausencias={ausencias} onBack={()=>setScreen("dash")} cargarAusencias={cargarAusencias}/></RealtimeContext.Provider>;
 
-  if(screen==="quickTasks"&&user) return <RealtimeContext.Provider value={realtimeContextValue}><style>{CSS}</style><ScreenQuickTasks user={user} quickTasks={quickTasks} onBack={()=>setScreen("dash")} onCreateTask={createQuickTask} onUpdateTask={updateQuickTask} onDeleteTask={deleteQuickTask} onRestoreTask={restoreQuickTask}/></RealtimeContext.Provider>;
+  if(screen==="quickTasks"&&user) return <RealtimeContext.Provider value={realtimeContextValue}><style>{CSS}</style><ScreenQuickTasks user={user} quickTasks={quickTasks} onBack={()=>{setSelQuickTask(null);setScreen("dash");}} onCreateTask={createQuickTask} onUpdateTask={updateQuickTask} onDeleteTask={deleteQuickTask} onRestoreTask={restoreQuickTask} initialSelected={selQuickTask}/></RealtimeContext.Provider>;
 
   if(screen==="versions"&&user&&(user.dept==="Dirección"||user.dept==="Ingenieria")) return <RealtimeContext.Provider value={realtimeContextValue}><style>{CSS}</style><ScreenVersions user={user} onBack={()=>setScreen("dash")}/></RealtimeContext.Provider>;
 
