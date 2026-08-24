@@ -2611,6 +2611,9 @@ function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDe
   const [showCreateForm,setShowCreateForm]=useState(false);
   const [editingTask,setEditingTask]=useState(null);
   const [commentText,setCommentText]=useState("");
+  const [qtCommentAttachments,setQtCommentAttachments]=useState([]);
+  const [qtUploadingAttach,setQtUploadingAttach]=useState(false);
+  const [qtAttachErr,setQtAttachErr]=useState(null);
   const [showDeleteConfirm,setShowDeleteConfirm]=useState(false);
   const [deleteReason,setDeleteReason]=useState("");
   const isMobile=useIsMobile();
@@ -2677,6 +2680,25 @@ function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDe
     });
   };
 
+  const handleQtCommentAttach=async files=>{
+    setQtAttachErr(null);
+    for(const file of files){
+      if(file.size>MAX_ATTACHMENT_SIZE){setQtAttachErr(`"${file.name}" supera 20MB`);continue;}
+      setQtUploadingAttach(true);
+      const commentId=`qt-${selectedTask.id}-${Date.now()}`;
+      const path=`comments/${commentId}/${Date.now()}_${file.name}`;
+      const{error}=await supabase.storage.from("task-attachments").upload(path,file);
+      setQtUploadingAttach(false);
+      if(error){setQtAttachErr(error.message);continue;}
+      const newAtt={nombre:file.name,url:path,subidoPor:{id:user.id,name:user.name,ini:user.ini,uc:user.uc},fecha:new Date().toISOString()};
+      setQtCommentAttachments(p=>[...p,newAtt]);
+    }
+  };
+
+  const handleRemoveQtAttachment=idx=>{
+    setQtCommentAttachments(p=>p.filter((_,i)=>i!==idx));
+  };
+
   const handleSendComment=()=>{
     if(!commentText.trim()) return;
     console.log("[QuickTask Comment] iniciando", { taskId: selectedTask.id, commentText });
@@ -2685,7 +2707,8 @@ function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDe
       user:{id:user.id,name:user.name},
       text:commentText,
       time:now.toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"})+" "+now.toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"}),
-      iso:now.toISOString()
+      iso:now.toISOString(),
+      attachments:qtCommentAttachments
     };
     onUpdateTask(selectedTask.id,{comments:[...(selectedTask.comments||[]),c]});
 
@@ -2773,6 +2796,7 @@ function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDe
     }
 
     setCommentText("");
+    setQtCommentAttachments([]);
   };
 
   const handleDelete=()=>{
@@ -2869,18 +2893,54 @@ function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDe
                       <div style={{fontSize:11,fontWeight:600,color:T1,marginBottom:2}}>{c.user?.name||"—"}</div>
                       <div style={{fontSize:12,color:T2,marginBottom:4}}>{c.text}</div>
                       <div style={{fontSize:10,color:T3}}>{c.time}</div>
+
+                      {(c.attachments||[]).length>0&&(
+                        <div style={{marginTop:6,display:"flex",flexDirection:"column",gap:4}}>
+                          {c.attachments.map((att,ai)=>(
+                            <div key={ai} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,background:CARD,borderRadius:6,padding:"6px 8px",border:`1px solid ${BD}`}}>
+                              <div style={{fontSize:10,color:T1,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📎 {att.nombre}</div>
+                              <button onClick={()=>downloadAttachmentIOS(att)}
+                                style={{background:"none",border:`1px solid ${BD}`,borderRadius:4,padding:"2px 6px",cursor:"pointer",fontSize:9,fontWeight:600,color:PR,flexShrink:0,fontFamily:"inherit"}}>
+                                ⬇
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))}
                   {(selectedTask.comments||[]).length===0&&<div style={{fontSize:12,color:T3,fontStyle:"italic"}}>Sin comentarios</div>}
                 </div>
-                <div style={{display:"flex",gap:8}}>
-                  <input type="text" value={commentText} onChange={e=>setCommentText(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleSendComment()}
-                    placeholder="Escribe un comentario..."
-                    style={{flex:1,padding:"10px 12px",borderRadius:8,border:`1px solid ${BD}`,fontSize:13,background:CARD,color:T1}}/>
-                  <button onClick={handleSendComment} disabled={!commentText.trim()}
-                    style={{background:commentText.trim()?PR:"#94A3B8",color:"#fff",border:"none",padding:"10px 16px",borderRadius:8,cursor:commentText.trim()?"pointer":"not-allowed",fontSize:13,fontWeight:600}}>
-                    Enviar
-                  </button>
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {qtCommentAttachments.length>0&&(
+                    <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                      {qtCommentAttachments.map((att,i)=>(
+                        <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,background:BG,borderRadius:6,padding:"6px 10px"}}>
+                          <div style={{fontSize:11,color:T1,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📎 {att.nombre}</div>
+                          <button onClick={()=>handleRemoveQtAttachment(i)}
+                            style={{background:"none",border:"none",color:"#DC2626",cursor:"pointer",fontSize:12,padding:0}}>✕</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div style={{display:"flex",gap:8}}>
+                    <input type="text" value={commentText} onChange={e=>setCommentText(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleSendComment()}
+                      placeholder="Escribe un comentario..."
+                      style={{flex:1,padding:"10px 12px",borderRadius:8,border:`1px solid ${BD}`,fontSize:13,background:CARD,color:T1}}/>
+
+                    <label style={{display:"inline-flex",alignItems:"center",justifyContent:"center",background:CARD,border:`1px solid ${BD}`,borderRadius:8,padding:"10px 12px",cursor:qtUploadingAttach?"default":"pointer",fontSize:13,flexShrink:0}}>
+                      {qtUploadingAttach?"⏳":"📎"}
+                      <input type="file" multiple disabled={qtUploadingAttach} style={{display:"none"}}
+                        onChange={e=>{const files=Array.from(e.target.files||[]);handleQtCommentAttach(files);e.target.value="";}}/>
+                    </label>
+
+                    <button onClick={handleSendComment} disabled={!commentText.trim()}
+                      style={{background:commentText.trim()?PR:"#94A3B8",color:"#fff",border:"none",padding:"10px 16px",borderRadius:8,cursor:commentText.trim()?"pointer":"not-allowed",fontSize:13,fontWeight:600}}>
+                      Enviar
+                    </button>
+                  </div>
+                  {qtAttachErr&&<div style={{fontSize:11,color:"#DC2626"}}>{qtAttachErr}</div>}
                 </div>
               </div>
             )}
@@ -3376,6 +3436,9 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
   const [showAllLog,setShowAllLog]=useState(false);
   const [editingCommentIdx,setEditingCommentIdx]=useState(null);
   const [editCommentText,setEditCommentText]=useState("");
+  const [commentAttachments,setCommentAttachments]=useState([]);
+  const [uploadingCommentAttach,setUploadingCommentAttach]=useState(false);
+  const [commentAttachErr,setCommentAttachErr]=useState(null);
   const recRef=useRef(null);
   const task=useMemo(()=>tasks.find(t=>t.id===taskId)||null,[tasks,taskId]);
 
@@ -3388,10 +3451,30 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
     r.start();recRef.current=r;setRecOn(true);setRecErr(false);
   };
   const stopVoice=()=>{recRef.current?.stop();setRecOn(false);};
+
+  const handleCommentAttach=async files=>{
+    setCommentAttachErr(null);
+    for(const file of files){
+      if(file.size>MAX_ATTACHMENT_SIZE){setCommentAttachErr(`"${file.name}" supera 20MB`);continue;}
+      setUploadingCommentAttach(true);
+      const commentId=`task-${taskId}-${Date.now()}`;
+      const path=`comments/${commentId}/${Date.now()}_${file.name}`;
+      const{error}=await supabase.storage.from("task-attachments").upload(path,file);
+      setUploadingCommentAttach(false);
+      if(error){setCommentAttachErr(error.message);continue;}
+      const newAtt={nombre:file.name,url:path,subidoPor:{id:user.id,name:user.name,ini:user.ini,uc:user.uc},fecha:new Date().toISOString()};
+      setCommentAttachments(p=>[...p,newAtt]);
+    }
+  };
+
+  const handleRemoveCommentAttachment=idx=>{
+    setCommentAttachments(p=>p.filter((_,i)=>i!==idx));
+  };
+
   const sendComment=()=>{
     if(!comment.trim()) return;
     const _now=new Date();
-    const c={user,text:comment,time:_now.toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"})+" "+_now.toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"}),iso:_now.toISOString()};
+    const c={user,text:comment,time:_now.toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"})+" "+_now.toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"}),iso:_now.toISOString(),attachments:commentAttachments};
     onUpdate(taskId,{comments:[...(task?.comments||[]),c]});
     const recipientIds=[...new Set([...(task?.invIds||[]),task?.responsible?.id,task?.creator?.id].filter(Boolean))].filter(id=>id!==user?.id);
     const commentPreview=`${comment.trim().slice(0,80)}${comment.trim().length>80?"…":""}`;
@@ -3431,6 +3514,7 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
       });
     }
     setComment("");
+    setCommentAttachments([]);
   };
 
   const startEditComment=(i,c)=>{setEditingCommentIdx(i);setEditCommentText(c.text);};
@@ -3485,6 +3569,7 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
   const lastNodeCompleted=isLastNode&&(flowStates[flowStageIds[myInvIndex]]||"Pendiente")==="Completado";
   const pct=calcProgress(invIds,flowStates,flowStageIds);
   const isMobile=useIsMobile();
+  const fmtDT=f=>{const d=new Date(f);return d.toLocaleDateString("es-MX",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"});};
 
   return(
     <div style={{minHeight:"100vh",background:BG}}>
@@ -3775,7 +3860,25 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
                             </div>
                           </div>
                         ):(
-                          <p style={{fontSize:13,color:T2,lineHeight:1.6}}>{c.text}</p>
+                          <>
+                            <p style={{fontSize:13,color:T2,lineHeight:1.6}}>{c.text}</p>
+                            {(c.attachments||[]).length>0&&(
+                              <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:4}}>
+                                {c.attachments.map((att,ai)=>(
+                                  <div key={ai} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,background:"rgba(255,255,255,.5)",borderRadius:6,padding:"6px 10px",border:`1px solid ${BD}`}}>
+                                    <div style={{minWidth:0,flex:1}}>
+                                      <div style={{fontSize:11,color:T1,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📎 {att.nombre}</div>
+                                      <div style={{fontSize:9,color:T3}}>{att.subidoPor?.name||"—"} · {fmtDT(att.fecha)}</div>
+                                    </div>
+                                    <button onClick={()=>downloadAttachmentIOS(att)}
+                                      style={{background:"none",border:`1px solid ${BD}`,borderRadius:6,padding:"3px 8px",cursor:"pointer",fontSize:10,fontWeight:600,color:PR,flexShrink:0,fontFamily:"inherit"}}>
+                                      ⬇
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
                     </div>
@@ -3784,6 +3887,19 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
               </div>
               {user&&<div style={{border:`1px solid ${BD}`,borderRadius:10,overflow:"hidden"}}>
                 <textarea value={comment} onChange={e=>setComment(e.target.value)} rows={3} placeholder="Escribe o dicta una actualización..." style={{...inp,border:"none",borderRadius:0,padding:"12px 14px"}}/>
+
+                {commentAttachments.length>0&&(
+                  <div style={{padding:"8px 12px",borderTop:`1px solid ${BD}`,display:"flex",flexDirection:"column",gap:4}}>
+                    {commentAttachments.map((att,i)=>(
+                      <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,background:BG,borderRadius:6,padding:"6px 10px"}}>
+                        <div style={{fontSize:11,color:T1,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📎 {att.nombre}</div>
+                        <button onClick={()=>handleRemoveCommentAttachment(i)}
+                          style={{background:"none",border:"none",color:"#DC2626",cursor:"pointer",fontSize:12,padding:0}}>✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 <div style={{background:BG,padding:"8px 12px",display:"flex",justifyContent:"space-between",alignItems:"center",borderTop:`1px solid ${BD}`}}>
                   <div style={{display:"flex",gap:8,alignItems:"center"}}>
                     <button onClick={recOn?stopVoice:startVoice} className={recOn?"pl":""}
@@ -3791,6 +3907,13 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
                       <span>{recOn?"⏹":"🎙️"}</span><span>{recOn?"Detener":"Dictar"}</span>
                     </button>
                     {recErr&&<span style={{fontSize:11,color:"#DC2626"}}>Usa Chrome</span>}
+
+                    <label style={{display:"inline-flex",alignItems:"center",gap:6,background:CARD,border:`1px solid ${BD}`,borderRadius:8,padding:"6px 12px",cursor:uploadingCommentAttach?"default":"pointer",fontSize:12,fontWeight:600,color:T2}}>
+                      {uploadingCommentAttach?"Subiendo...":"📎 Adjuntar"}
+                      <input type="file" multiple disabled={uploadingCommentAttach} style={{display:"none"}}
+                        onChange={e=>{const files=Array.from(e.target.files||[]);handleCommentAttach(files);e.target.value="";}}/>
+                    </label>
+                    {commentAttachErr&&<span style={{fontSize:11,color:"#DC2626"}}>{commentAttachErr}</span>}
                   </div>
                   <button onClick={sendComment} style={{background:comment.trim()?PR:"#E2E8F0",color:comment.trim()?"#fff":T3,border:"none",padding:"8px 18px",borderRadius:8,cursor:comment.trim()?"pointer":"default",fontSize:13,fontWeight:600,transition:"all .12s"}}>Enviar</button>
                 </div>
@@ -3987,6 +4110,9 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onDeleteAviso,
   const [uploadingAttach,setUploadingAttach]=useState(false);
   const [attachErr,setAttachErr]=useState(null);
   const [commentText,setCommentText]=useState("");
+  const [avisoCommentAttachments,setAvisoCommentAttachments]=useState([]);
+  const [avisoCommentUploadingAttach,setAvisoCommentUploadingAttach]=useState(false);
+  const [avisoCommentAttachErr,setAvisoCommentAttachErr]=useState(null);
   const [editingCommentId,setEditingCommentId]=useState(null);
   const [editCommentText,setEditCommentText]=useState("");
   const [editingAviso,setEditingAviso]=useState(false);
@@ -4059,12 +4185,32 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onDeleteAviso,
     await downloadAttachmentIOS(att);
   };
 
+  const handleAvisoCommentAttach=async files=>{
+    setAvisoCommentAttachErr(null);
+    for(const file of files){
+      if(file.size>MAX_ATTACHMENT_SIZE){setAvisoCommentAttachErr(`"${file.name}" supera 20MB`);continue;}
+      setAvisoCommentUploadingAttach(true);
+      const commentId=`aviso-${selectedAviso.id}-${Date.now()}`;
+      const path=`comments/${commentId}/${Date.now()}_${file.name}`;
+      const{error}=await supabase.storage.from("task-attachments").upload(path,file);
+      setAvisoCommentUploadingAttach(false);
+      if(error){setAvisoCommentAttachErr(error.message);continue;}
+      const newAtt={nombre:file.name,url:path,subidoPor:{id:user.id,name:user.name,ini:user.ini,uc:user.uc},fecha:new Date().toISOString()};
+      setAvisoCommentAttachments(p=>[...p,newAtt]);
+    }
+  };
+
+  const handleRemoveAvisoCommentAttachment=idx=>{
+    setAvisoCommentAttachments(p=>p.filter((_,i)=>i!==idx));
+  };
+
   const postAvisoComment=()=>{
     if(!commentText.trim()||!selectedAviso) return;
     const a=selectedAviso;
-    const newComment={id:`ac-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,text:commentText.trim(),authorId:user.id,authorName:user.name,iso:new Date().toISOString()};
+    const newComment={id:`ac-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,text:commentText.trim(),authorId:user.id,authorName:user.name,iso:new Date().toISOString(),attachments:avisoCommentAttachments};
     setSelectedAviso({...a,comments:[...(a.comments||[]),newComment]});
     setCommentText("");
+    setAvisoCommentAttachments([]);
     // Append atómico server-side: nunca pisa un comentario que otro
     // cliente haya agregado casi al mismo tiempo (ver append_aviso_comment).
     supabase.rpc("append_aviso_comment",{aviso_id:a.id,new_comment:newComment})
@@ -4375,27 +4521,65 @@ function ScreenAviso({user,avisos,onSend,onMarkRead,onUpdateAviso,onDeleteAviso,
                           </div>
                         </div>
                       ):(
-                        <p style={{margin:0,fontSize:13,color:T1,lineHeight:1.6,whiteSpace:"pre-wrap"}}>{c.text}</p>
+                        <>
+                          <p style={{margin:0,fontSize:13,color:T1,lineHeight:1.6,whiteSpace:"pre-wrap"}}>{c.text}</p>
+                          {!isEditingThis&&(c.attachments||[]).length>0&&(
+                            <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:4}}>
+                              {c.attachments.map((att,ai)=>(
+                                <div key={ai} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,background:"rgba(255,255,255,.5)",borderRadius:6,padding:"6px 10px",border:`1px solid ${BD}`}}>
+                                  <div style={{minWidth:0,flex:1}}>
+                                    <div style={{fontSize:11,color:T1,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📎 {att.nombre}</div>
+                                    <div style={{fontSize:9,color:T3}}>{att.subidoPor?.name||"—"} · {fmtFecha(att.fecha)}</div>
+                                  </div>
+                                  <button onClick={()=>downloadAttachmentIOS(att)}
+                                    style={{background:"none",border:`1px solid ${BD}`,borderRadius:6,padding:"3px 8px",cursor:"pointer",fontSize:10,fontWeight:600,color:PR,flexShrink:0,fontFamily:"inherit"}}>
+                                    ⬇
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
                     );
                   })}
                 </div>
-                <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
-                  <textarea
-                    value={commentText}
-                    onChange={e=>setCommentText(e.target.value)}
-                    placeholder="Escribe un comentario..."
-                    rows={2}
-                    style={{flex:1,borderRadius:8,border:`1px solid ${BD}`,padding:"8px 12px",fontSize:13,color:T1,background:BG,resize:"vertical",fontFamily:"inherit",outline:"none"}}
-                    onKeyDown={e=>{if(e.key==="Enter"&&(e.ctrlKey||e.metaKey)){e.preventDefault();postAvisoComment();}}}
-                  />
-                  <button
-                    onClick={postAvisoComment}
-                    disabled={!commentText.trim()}
-                    style={{background:commentText.trim()?PR:"#ccc",color:"#fff",border:"none",borderRadius:8,padding:"8px 14px",cursor:commentText.trim()?"pointer":"default",fontSize:13,fontWeight:600,fontFamily:"inherit",flexShrink:0,alignSelf:"flex-end"}}>
-                    Enviar
-                  </button>
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {avisoCommentAttachments.length>0&&(
+                    <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                      {avisoCommentAttachments.map((att,i)=>(
+                        <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,background:BG,borderRadius:6,padding:"6px 10px"}}>
+                          <div style={{fontSize:11,color:T1,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>📎 {att.nombre}</div>
+                          <button onClick={()=>handleRemoveAvisoCommentAttachment(i)}
+                            style={{background:"none",border:"none",color:"#DC2626",cursor:"pointer",fontSize:12,padding:0}}>✕</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
+                    <textarea
+                      value={commentText}
+                      onChange={e=>setCommentText(e.target.value)}
+                      placeholder="Escribe un comentario..."
+                      rows={2}
+                      style={{flex:1,borderRadius:8,border:`1px solid ${BD}`,padding:"8px 12px",fontSize:13,color:T1,background:BG,resize:"vertical",fontFamily:"inherit",outline:"none"}}
+                      onKeyDown={e=>{if(e.key==="Enter"&&(e.ctrlKey||e.metaKey)){e.preventDefault();postAvisoComment();}}}
+                    />
+                    <label style={{display:"inline-flex",alignItems:"center",justifyContent:"center",background:CARD,border:`1px solid ${BD}`,borderRadius:8,padding:"8px 12px",cursor:avisoCommentUploadingAttach?"default":"pointer",fontSize:13,flexShrink:0,alignSelf:"flex-end"}}>
+                      {avisoCommentUploadingAttach?"⏳":"📎"}
+                      <input type="file" multiple disabled={avisoCommentUploadingAttach} style={{display:"none"}}
+                        onChange={e=>{const files=Array.from(e.target.files||[]);handleAvisoCommentAttach(files);e.target.value="";}}/>
+                    </label>
+                    <button
+                      onClick={postAvisoComment}
+                      disabled={!commentText.trim()}
+                      style={{background:commentText.trim()?PR:"#ccc",color:"#fff",border:"none",borderRadius:8,padding:"8px 14px",cursor:commentText.trim()?"pointer":"default",fontSize:13,fontWeight:600,fontFamily:"inherit",flexShrink:0,alignSelf:"flex-end"}}>
+                      Enviar
+                    </button>
+                  </div>
+                  {avisoCommentAttachErr&&<div style={{fontSize:11,color:"#DC2626"}}>{avisoCommentAttachErr}</div>}
                 </div>
                 <div style={{fontSize:10,color:T3,marginTop:4}}>Ctrl+Enter para enviar</div>
               </div>
