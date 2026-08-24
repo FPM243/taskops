@@ -3558,8 +3558,9 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
       if(myState!=="Completado"&&prevDone) return idx;
     }
 
-    // Si todos están completados o ninguno está listo, devolver la primera ocurrencia
-    return userOccurrences[0];
+    // Si todos están completados o ninguno está listo, devolver la ÚLTIMA ocurrencia
+    // (importante para isLastNode cuando el usuario aparece múltiples veces)
+    return userOccurrences[userOccurrences.length-1];
   })():-1;
 
   const isInvolved=myInvIndex!==-1;
