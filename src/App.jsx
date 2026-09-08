@@ -204,6 +204,7 @@ function TRow({t,onClick,roleBadge}){
             <Badge ch={t.type}     c={tt.c} bg={tt.bg}/>
             <Badge ch={t.priority} c={pc.c} bg={pc.bg}/>
             <Badge ch={t.status}   c={sc.c} bg={sc.bg}/>
+            {t.pausedForPayment&&<Badge ch="💳 Pausada" c="#D97706" bg="#FFFBEB"/>}
             {dl.isOver&&<Badge ch="⚠ Vencida" c="#DC2626" bg="#FEF2F2"/>}
             {dl.isToday&&<Badge ch="🟠 Vence hoy" c="#EA580C" bg="#FFF7ED"/>}
           </div>
@@ -1058,7 +1059,7 @@ function FormularioAusencia({user,onClose,onSave,ausenciaEditar}){
 /* ════════════════════════════════════════
    SCREEN: DASHBOARD
 ════════════════════════════════════════ */
-function ScreenDashboard({tasks,user,onStatClick,onDeptClick,onPickerDeptClick,onTaskClick,onNewTask,onSearch,onStats,onMyTasks,onCalendar,onDelays,onDeleted,onStuck,userIsAuthed,onRequestAuth,deptIsAuthed,dbConnected,onAvisos,unreadAvisos,isGuest,onLogin,onNotif,onLogout,unreadNotif,onAusencias,onQuickTasks,quickTasksCount,ausencias,cargarAusencias,onVersions}){
+function ScreenDashboard({tasks,user,onStatClick,onDeptClick,onPickerDeptClick,onTaskClick,onNewTask,onSearch,onStats,onMyTasks,onCalendar,onDelays,onDeleted,onStuck,userIsAuthed,onRequestAuth,deptIsAuthed,dbConnected,onAvisos,unreadAvisos,isGuest,onLogin,onNotif,onLogout,unreadNotif,onAusencias,onQuickTasks,quickTasksCount,ausencias,cargarAusencias,onVersions,onPausedForPayment,pausedCount}){
   const scrollRef=useScrollRestore("dashboard");
   const [pickerOpen,setPickerOpen]=useState(false);
   const [tab,setTab]=useState("active");
@@ -1160,6 +1161,10 @@ function ScreenDashboard({tasks,user,onStatClick,onDeptClick,onPickerDeptClick,o
           {(user?.dept==="Dirección"||user?.dept==="Ingenieria")&&<button className="nb" onClick={onDeleted} style={{fontSize:11}}>🗑️ Eliminadas</button>}
           {(user?.dept==="Dirección"||user?.dept==="Ingenieria")&&<button className="nb" onClick={onVersions} style={{fontSize:11}}>📱 Versiones</button>}
           <button className="nb" onClick={onStuck}  style={{fontSize:11}}>⏸ Estancadas</button>
+          <button className="nb" onClick={onPausedForPayment} style={{fontSize:11,position:"relative"}}>
+            💳 Pausadas por pago
+            {pausedCount>0&&<span style={{background:"#D97706",color:"#fff",borderRadius:20,fontSize:9,fontWeight:700,padding:"1px 6px",lineHeight:"14px",marginLeft:4}}>{pausedCount}</span>}
+          </button>
           <button className="nb" onClick={onSearch}  style={{fontSize:11}}>🔍 Buscar</button>
           <button className="nb" onClick={onMyTasks} style={{fontSize:11}}>👤 Mis Tareas</button>
           <button className="nb" onClick={onCalendar}style={{fontSize:11}}>📅 Calendario</button>
@@ -2616,6 +2621,8 @@ function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDe
   const [qtAttachErr,setQtAttachErr]=useState(null);
   const [showDeleteConfirm,setShowDeleteConfirm]=useState(false);
   const [deleteReason,setDeleteReason]=useState("");
+  const [showPauseFormQt,setShowPauseFormQt]=useState(false);
+  const [pauseNoteQt,setPauseNoteQt]=useState("");
   const isMobile=useIsMobile();
 
   const isDireccion=user?.dept==="Dirección";
@@ -2868,6 +2875,22 @@ function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDe
               </div>
             </div>
 
+            {/* Badge pausada por pago */}
+            {selectedTask.pausedForPayment&&(
+              <div style={{display:"flex",gap:10,alignItems:"flex-start",background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:8,padding:"10px 14px",marginBottom:16}}>
+                <span style={{fontSize:16,flexShrink:0}}>💳</span>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:11,fontWeight:700,color:"#D97706",marginBottom:2}}>
+                    Pausada por falta de pago
+                    {selectedTask.pausedBy?` — ${selectedTask.pausedBy.name}`:""}
+                    {selectedTask.pausedAt?` · ${new Date(selectedTask.pausedAt).toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"})}`:""}
+                    {selectedTask.pausedAt?` (hace ${Math.floor((new Date()-new Date(selectedTask.pausedAt))/86400000)} días)`:""}
+                  </div>
+                  {selectedTask.pausedNote&&<p style={{fontSize:12,color:"#92400E",lineHeight:1.5,margin:0}}>{selectedTask.pausedNote}</p>}
+                </div>
+              </div>
+            )}
+
             {/* Botones de estado */}
             {!selectedTask.deleted&&(
               <div style={{marginBottom:20}}>
@@ -2879,6 +2902,37 @@ function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDe
                       {st}
                     </button>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {/* Formulario de pausa */}
+            {showPauseFormQt&&!selectedTask.deleted&&(
+              <div style={{marginBottom:20}}>
+                <div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:8,padding:14}}>
+                  <div style={{fontSize:12,fontWeight:600,color:"#D97706",marginBottom:8}}>Motivo de la pausa (opcional)</div>
+                  <textarea value={pauseNoteQt} onChange={e=>setPauseNoteQt(e.target.value)} rows={2}
+                    placeholder="Ej: Cliente no ha pagado, falta anticipo, etc."
+                    style={{width:"100%",padding:10,borderRadius:6,border:`1px solid ${BD}`,fontSize:12,background:CARD,color:T1,resize:"vertical",marginBottom:10}}/>
+                  <div style={{display:"flex",gap:8}}>
+                    <button onClick={()=>{
+                      onUpdateTask(selectedTask.id,{
+                        pausedForPayment:true,
+                        pausedAt:new Date().toISOString(),
+                        pausedBy:{id:user.id,name:user.name},
+                        pausedNote:pauseNoteQt.trim()
+                      });
+                      setShowPauseFormQt(false);
+                      setPauseNoteQt("");
+                    }}
+                      style={{background:"#D97706",color:"#fff",border:"none",padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>
+                      Confirmar pausa
+                    </button>
+                    <button onClick={()=>{setShowPauseFormQt(false);setPauseNoteQt("");}}
+                      style={{background:CARD,border:`1px solid ${BD}`,color:T2,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12}}>
+                      Cancelar
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -2957,6 +3011,18 @@ function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDe
                 <button onClick={()=>setShowDeleteConfirm(true)}
                   style={{background:"#FEF2F2",color:"#DC2626",border:"1px solid #FCA5A5",padding:"10px 16px",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600}}>
                   🗑️ Eliminar
+                </button>
+              )}
+              {!selectedTask.deleted&&!selectedTask.pausedForPayment&&(
+                <button onClick={()=>{setShowPauseFormQt(true);setPauseNoteQt("");}}
+                  style={{background:"#FFFBEB",color:"#D97706",border:"1px solid #FDE68A",padding:"10px 16px",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600}}>
+                  ⏸ Pausar por pago
+                </button>
+              )}
+              {!selectedTask.deleted&&selectedTask.pausedForPayment&&(
+                <button onClick={()=>{onUpdateTask(selectedTask.id,{pausedForPayment:false,pausedAt:null,pausedBy:null,pausedNote:""});}}
+                  style={{background:"#ECFDF5",color:"#059669",border:"1px solid #A7F3D0",padding:"10px 16px",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:600}}>
+                  ▶️ Reanudar
                 </button>
               )}
               {selectedTask.deleted&&canEdit(selectedTask)&&(
@@ -3110,6 +3176,7 @@ function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDe
                         <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
                           <Badge ch={priorityLabel(task.priority)} c={priorityColor(task.priority)} bg={priorityColor(task.priority)+"15"}/>
                           <Badge ch={task.status} c={statusColor(task.status)} bg={statusColor(task.status)+"15"}/>
+                          {task.pausedForPayment&&<Badge ch="💳" c="#D97706" bg="#FFFBEB"/>}
                           {task.deadline&&<Badge ch={new Date(task.deadline).toLocaleDateString("es-MX",{day:"2-digit",month:"short"})} c={T3} bg={BG}/>}
                           {task.assignedUserIds?.length>0?(
                             <span style={{fontSize:10,color:T3}}>
@@ -3153,6 +3220,7 @@ function ScreenQuickTasks({user,quickTasks,onBack,onCreateTask,onUpdateTask,onDe
                     <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
                       <Badge ch={priorityLabel(task.priority)} c={priorityColor(task.priority)} bg={priorityColor(task.priority)+"15"}/>
                       <Badge ch={task.status} c={statusColor(task.status)} bg={statusColor(task.status)+"15"}/>
+                      {task.pausedForPayment&&<Badge ch="💳" c="#D97706" bg="#FFFBEB"/>}
                       {task.deadline&&<Badge ch={new Date(task.deadline).toLocaleDateString("es-MX",{day:"2-digit",month:"short"})} c={T3} bg={BG}/>}
                       {task.assignedUserIds?.length>0?(
                         <span style={{fontSize:10,color:T3}}>
@@ -3433,6 +3501,8 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
   const [blockReason,setBlockReason]=useState("");
   const [showCancelForm,setShowCancelForm]=useState(false);
   const [cancelReason,setCancelReason]=useState("");
+  const [showPauseForm,setShowPauseForm]=useState(false);
+  const [pauseNote,setPauseNote]=useState("");
   const [showAllLog,setShowAllLog]=useState(false);
   const [editingCommentIdx,setEditingCommentIdx]=useState(null);
   const [editCommentText,setEditCommentText]=useState("");
@@ -3581,8 +3651,10 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
         center={null}
         right={<div style={{display:"flex",gap:8}}>
           {canEdit&&<button onClick={()=>onEdit(task)} style={{background:PRl,color:PR,border:`1px solid ${PR}`,padding:"7px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600}}>✏️ Editar</button>}
-          {canEdit&&user.dept==="Dirección"&&<button onClick={()=>{setShowBlockForm(true);setBlockReason("");setShowCancelForm(false);}} style={{background:"#FEF2F2",color:"#DC2626",border:"1px solid #FECACA",padding:"7px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600}}>🔒{isMobile?"":" Bloquear"}</button>}
-          {canEdit&&<button onClick={()=>{setShowCancelForm(true);setCancelReason("");setShowBlockForm(false);}} style={{background:"#F9FAFB",color:"#6B7280",border:"1px solid #E5E7EB",padding:"7px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600}}>✕{isMobile?"":" Cancelar"}</button>}
+          {canEdit&&user.dept==="Dirección"&&<button onClick={()=>{setShowBlockForm(true);setBlockReason("");setShowCancelForm(false);setShowPauseForm(false);}} style={{background:"#FEF2F2",color:"#DC2626",border:"1px solid #FECACA",padding:"7px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600}}>🔒{isMobile?"":" Bloquear"}</button>}
+          {canEdit&&<button onClick={()=>{setShowCancelForm(true);setCancelReason("");setShowBlockForm(false);setShowPauseForm(false);}} style={{background:"#F9FAFB",color:"#6B7280",border:"1px solid #E5E7EB",padding:"7px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600}}>✕{isMobile?"":" Cancelar"}</button>}
+          {canEdit&&!task.pausedForPayment&&<button onClick={()=>{setShowPauseForm(true);setPauseNote("");setShowBlockForm(false);setShowCancelForm(false);}} style={{background:"#FFFBEB",color:"#D97706",border:"1px solid #FDE68A",padding:"7px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600}}>⏸{isMobile?"":" Pausar por pago"}</button>}
+          {canEdit&&task.pausedForPayment&&<button onClick={()=>{onUpdate(taskId,{pausedForPayment:false,pausedAt:null,pausedBy:null,pausedNote:""});}} style={{background:"#ECFDF5",color:"#059669",border:"1px solid #A7F3D0",padding:"7px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600}}>▶️{isMobile?"":" Reanudar"}</button>}
           {canDelete&&<button onClick={()=>onDelete(task)} style={{background:"#FEF2F2",color:"#DC2626",border:"1px solid #FECACA",padding:"7px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600}}>🗑️</button>}
         </div>}
       />
@@ -3632,6 +3704,20 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
               </div>
             </div>
           )}
+          {task.pausedForPayment&&(
+            <div style={{display:"flex",gap:10,alignItems:"flex-start",background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:8,padding:"10px 14px",marginBottom:10}}>
+              <span style={{fontSize:16,flexShrink:0}}>💳</span>
+              <div style={{flex:1}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#D97706",marginBottom:2}}>
+                  Pausada por falta de pago
+                  {task.pausedBy?` — ${task.pausedBy.name}`:""}
+                  {task.pausedAt?` · ${new Date(task.pausedAt).toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"})}`:""}
+                  {task.pausedAt?` (hace ${Math.floor((new Date()-new Date(task.pausedAt))/86400000)} días)`:""}
+                </div>
+                {task.pausedNote&&<p style={{fontSize:13,color:"#92400E",lineHeight:1.5,margin:0}}>{task.pausedNote}</p>}
+              </div>
+            </div>
+          )}
           {showBlockForm&&(
             <div style={{background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:10,padding:14,marginBottom:10}}>
               <div style={{fontSize:12,fontWeight:700,color:"#DC2626",marginBottom:8}}>Razón del bloqueo *</div>
@@ -3672,6 +3758,33 @@ function ScreenTaskDetail({taskId,tasks,user,onBack,onUpdate,onEdit,onDelete}){
                 <button onClick={()=>setShowCancelForm(false)}
                   style={{background:CARD,border:`1px solid ${BD}`,color:T2,padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:12}}>
                   Cerrar
+                </button>
+              </div>
+            </div>
+          )}
+          {showPauseForm&&(
+            <div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:10,padding:14,marginBottom:10}}>
+              <div style={{fontSize:12,fontWeight:700,color:"#D97706",marginBottom:8}}>Motivo de la pausa (opcional)</div>
+              <textarea value={pauseNote} onChange={e=>setPauseNote(e.target.value)} rows={2}
+                placeholder="Ej: Cliente no ha pagado factura #1234, Falta anticipo del 50%, etc."
+                style={{...inp,borderRadius:6,fontSize:12,marginBottom:10}}/>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={()=>{
+                  onUpdate(taskId,{
+                    pausedForPayment:true,
+                    pausedAt:new Date().toISOString(),
+                    pausedBy:{id:user.id,name:user.name},
+                    pausedNote:pauseNote.trim()
+                  });
+                  setShowPauseForm(false);
+                  setPauseNote("");
+                }}
+                  style={{background:"#D97706",color:"#fff",border:"none",padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:700}}>
+                  Confirmar pausa
+                </button>
+                <button onClick={()=>setShowPauseForm(false)}
+                  style={{background:CARD,border:`1px solid ${BD}`,color:T2,padding:"8px 16px",borderRadius:8,cursor:"pointer",fontSize:12}}>
+                  Cancelar
                 </button>
               </div>
             </div>
@@ -5809,6 +5922,32 @@ export default function App(){
           });
         }
       }
+      // Notificación 4: tarea pausada por falta de pago
+      if(patch.pausedForPayment===true && task.pausedForPayment!==true && user){
+        const direccion=USERS.filter(u=>u.dept==="Dirección").map(u=>u.id);
+        if(direccion.length>0){
+          const pauseMsg=patch.pausedNote?` — Motivo: ${patch.pausedNote}`:"";
+          setTimeout(()=>sendPushNotification(
+            direccion,
+            "⏸ Tarea pausada por falta de pago",
+            `${user.name} pausó: "${task.title}"${pauseMsg}`,
+            `/?task=${task.id}`
+          ),0);
+          // Email a Dirección
+          direccion.forEach(id=>{
+            const u=USERS.find(x=>x.id===id);
+            if(u?.email){
+              setTimeout(()=>sendEmailNotification("tarea_pausada_pago",[u.email],{
+                userName:u.name,
+                taskId:task.id,
+                taskTitle:task.title,
+                pausedByName:user.name,
+                pausedNote:patch.pausedNote||"Sin motivo especificado",
+              }),0);
+            }
+          });
+        }
+      }
       return prev.map(t=>t.id===id?updated:t);
     });
     try {
@@ -5980,6 +6119,7 @@ export default function App(){
     else console.log("[Supabase] DELETE aviso ok:",id);
   };
   const unreadAvisos=user?avisos.filter(a=>avisoIncludesUser(a,user.id)&&!(a.leidoPor||[]).includes(user.id)).length:0;
+  const pausedCount=user?(tasks.filter(t=>t.pausedForPayment===true).length + quickTasks.filter(qt=>qt.pausedForPayment===true && !qt.deleted).length):0;
 
   // ════════════════════════════════════════
   // OPERACIONES CRUD: QUICK TASKS
@@ -6120,6 +6260,7 @@ export default function App(){
   };
 
   const updateQuickTask=(id,patch)=>{
+    const qt=quickTasks.find(t=>t.id===id);
     setQuickTasks(prev=>prev.map(t=>t.id===id?{...t,...patch}:t));
     supabase.rpc("merge_quick_task_data",{task_id:id,patch})
       .then(({error})=>{
@@ -6128,6 +6269,19 @@ export default function App(){
           setQuickTasks(prev=>prev.map(t=>t.id===id?quickTasks.find(x=>x.id===id)||t:t));
         }
       });
+    // Notificación: quick task pausada por falta de pago
+    if(qt && patch.pausedForPayment===true && qt.pausedForPayment!==true && user){
+      const direccion=USERS.filter(u=>u.dept==="Dirección").map(u=>u.id);
+      if(direccion.length>0){
+        const pauseMsg=patch.pausedNote?` — Motivo: ${patch.pausedNote}`:"";
+        setTimeout(()=>sendPushNotification(
+          direccion,
+          "⏸ Quick Task pausada por falta de pago",
+          `${user.name} pausó: "${qt.title}"${pauseMsg}`,
+          `/?quickTask=${qt.id}`
+        ),0);
+      }
+    }
   };
 
   const deleteQuickTask=(id,deleteData)=>{
@@ -6226,6 +6380,129 @@ export default function App(){
     const d=pwdModal.dept;setSelDept(d);setDeptCanAdd(false);setScreen("dept");setPwdModal(null);
   };
 
+  /* ════════════════════════════════════════
+     SCREEN: PAUSADAS POR PAGO
+  ════════════════════════════════════════ */
+  function ScreenPausedForPayment({tasks,quickTasks,user,onBack,onTaskClick,onQuickTaskClick}){
+    const isMobile=useIsMobile();
+
+    // Combinar tareas normales + quick tasks pausadas
+    const pausedTasks=useMemo(()=>{
+      const normalTasks=tasks
+        .filter(t=>t.pausedForPayment===true)
+        .map(t=>({
+          ...t,
+          itemType:"normal",
+          pausedDays:t.pausedAt?Math.floor((new Date()-new Date(t.pausedAt))/86400000):0
+        }));
+
+      const quickTasksPaused=quickTasks
+        .filter(qt=>qt.pausedForPayment===true && !qt.deleted)
+        .map(qt=>({
+          ...qt,
+          itemType:"quick",
+          pausedDays:qt.pausedAt?Math.floor((new Date()-new Date(qt.pausedAt))/86400000):0
+        }));
+
+      // Ordenar por antigüedad de pausa (más antiguas primero)
+      return [...normalTasks,...quickTasksPaused].sort((a,b)=>
+        new Date(a.pausedAt||0)-new Date(b.pausedAt||0)
+      );
+    },[tasks,quickTasks]);
+
+    const handleResume=(item)=>{
+      if(item.itemType==="normal"){
+        onTaskClick({...item,_action:"resume"});
+      } else {
+        onQuickTaskClick({...item,_action:"resume"});
+      }
+    };
+
+    return(
+      <div style={{minHeight:"100vh",background:BG}}>
+        <NavBar left={
+          <><BackBtn onClick={onBack}/>
+          <div>
+            <div style={{fontWeight:700,fontSize:15,color:T1}}>💳 Pausadas por Pago</div>
+            <div style={{fontSize:11,color:T2}}>{pausedTasks.length} {pausedTasks.length===1?"tarea":"tareas"}</div>
+          </div></>
+        }/>
+
+        <div style={{maxWidth:900,margin:"0 auto",padding:isMobile?"16px":"24px"}}>
+          {pausedTasks.length===0?(
+            <div style={{textAlign:"center",padding:"60px 20px",color:T3}}>
+              <div style={{fontSize:48,marginBottom:16}}>✓</div>
+              <div style={{fontSize:15,fontWeight:600,marginBottom:6}}>Sin tareas pausadas por pago</div>
+              <div style={{fontSize:13}}>Todas las tareas tienen pagos al día</div>
+            </div>
+          ):(
+            <div style={{display:"flex",flexDirection:"column",gap:12}}>
+              {pausedTasks.map((item,idx)=>{
+                const isNormal=item.itemType==="normal";
+                const typeLabel=isNormal?"Tarea":"Quick Task";
+                const dept=isNormal?item.responsible?.dept:item.dept;
+                const responsible=isNormal?item.responsible?.name:(item.assignedUserIds?.length>0?`${item.assignedUserIds.length} asignados`:"—");
+
+                return(
+                  <Card key={`${item.itemType}-${item.id}`} cls="rw" sx={{padding:"14px 18px",borderLeft:`4px solid #D97706`}}>
+                    <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        {/* Header */}
+                        <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:6,flexWrap:"wrap"}}>
+                          <Badge ch={typeLabel} c="#6B7280" bg="#F9FAFB"/>
+                          <Badge ch={dept||"—"} c={dc(dept)} bg={dc(dept)+"15"}/>
+                          <Badge ch={`⏸ ${item.pausedDays}d pausada`} c="#D97706" bg="#FFFBEB"/>
+                        </div>
+
+                        {/* Título */}
+                        <div
+                          onClick={()=>isNormal?onTaskClick(item):onQuickTaskClick(item)}
+                          style={{fontSize:14,fontWeight:600,color:T1,marginBottom:8,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",cursor:"pointer"}}>
+                          {item.title}
+                        </div>
+
+                        {/* Info */}
+                        <div style={{display:"flex",gap:12,flexWrap:"wrap",alignItems:"center",marginBottom:item.pausedNote?8:0}}>
+                          <span style={{fontSize:11,color:T2}}>👤 {responsible}</span>
+                          <span style={{fontSize:11,color:T3}}>
+                            Pausada por: {item.pausedBy?.name||"—"}
+                          </span>
+                          {item.pausedAt&&(
+                            <span style={{fontSize:11,color:T3}}>
+                              {new Date(item.pausedAt).toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"})}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Nota de pausa */}
+                        {item.pausedNote&&(
+                          <div style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:6,padding:"8px 12px",marginBottom:8}}>
+                            <div style={{fontSize:10,fontWeight:600,color:"#92400E",marginBottom:2}}>MOTIVO:</div>
+                            <div style={{fontSize:12,color:"#92400E",lineHeight:1.5}}>{item.pausedNote}</div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Botón reanudar */}
+                      <button
+                        onClick={(e)=>{
+                          e.stopPropagation();
+                          handleResume(item);
+                        }}
+                        style={{background:"#ECFDF5",color:"#059669",border:"1px solid #A7F3D0",padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:12,fontWeight:600,flexShrink:0,whiteSpace:"nowrap"}}>
+                        ▶️ Reanudar
+                      </button>
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   // Valor del contexto Realtime disponible en todas las pantallas
   const realtimeContextValue={status:realtimeStatus,lastSyncTime};
 
@@ -6295,6 +6572,21 @@ export default function App(){
 
   if(screen==="versions"&&user&&(user.dept==="Dirección"||user.dept==="Ingenieria")) return <RealtimeContext.Provider value={realtimeContextValue}><style>{CSS}</style><ScreenVersions user={user} onBack={()=>setScreen("dash")}/></RealtimeContext.Provider>;
 
+  if(screen==="pausedForPayment"&&user) return <RealtimeContext.Provider value={realtimeContextValue}><style>{CSS}</style><ScreenPausedForPayment tasks={tasks} quickTasks={quickTasks} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>{
+    if(t._action==="resume"){
+      updateTask(t.id,{pausedForPayment:false,pausedAt:null,pausedBy:null,pausedNote:""});
+    } else {
+      goTask(t,"pausedForPayment");
+    }
+  }} onQuickTaskClick={qt=>{
+    if(qt._action==="resume"){
+      updateQuickTask(qt.id,{pausedForPayment:false,pausedAt:null,pausedBy:null,pausedNote:""});
+    } else {
+      setSelQuickTask(qt);
+      setScreen("quickTasks");
+    }
+  }}/></RealtimeContext.Provider>;
+
   return(
     <RealtimeContext.Provider value={realtimeContextValue}>
       <style>{CSS}</style>
@@ -6312,6 +6604,8 @@ export default function App(){
         onStuck={()=>setScreen("stuck")}
         onDeleted={()=>setScreen("deleted")}
         onVersions={()=>setScreen("versions")}
+        onPausedForPayment={()=>setScreen("pausedForPayment")}
+        pausedCount={pausedCount}
         userIsAuthed={userIsAuthed}
         onRequestAuth={user?()=>setPwdModal({dept:user.dept,fromFab:true}):()=>setScreen("login")}
         deptIsAuthed={canAddInDept}

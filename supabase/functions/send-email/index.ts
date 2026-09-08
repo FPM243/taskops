@@ -385,6 +385,21 @@ serve(async (req) => {
         textBody = template8.text;
         break;
 
+      case "tarea_pausada_pago":
+        subject = `Tarea pausada por falta de pago: ${data.taskTitle}`;
+        const templatePausada = emailTemplate(
+          "Una tarea fue pausada por falta de pago",
+          `<p>Hola <strong>${data.userName}</strong>,</p>
+           <p>La siguiente tarea fue pausada por <strong>${data.pausedByName}</strong> debido a falta de pago:</p>
+           <p style="background:#FFFBEB;border-left:3px solid #D97706;padding:12px 16px;border-radius:4px;font-weight:600;color:#1E1B4B;">${data.taskTitle}</p>
+           <p><strong>Motivo:</strong> ${data.pausedNote}</p>
+           <p style="color:#64748B;font-size:13px;">⚠️ Esta tarea permanecerá pausada hasta que se resuelva el pago pendiente.</p>`,
+          data.taskId
+        );
+        htmlBody = templatePausada.html;
+        textBody = templatePausada.text;
+        break;
+
       case "nuevo_comentario":
         subject = `Nuevo comentario en: ${data.taskTitle}`;
         const template9 = emailTemplate(
