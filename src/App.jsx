@@ -6383,8 +6383,22 @@ export default function App(){
   /* ════════════════════════════════════════
      SCREEN: PAUSADAS POR PAGO
   ════════════════════════════════════════ */
-  function ScreenPausedForPayment({tasks,quickTasks,user,onBack,onTaskClick,onQuickTaskClick}){
+  function ScreenPausedForPayment({tasks,quickTasks,user,onBack,onTaskClick,onQuickTaskClick,onUpdateTask,onUpdateQuickTask}){
     const isMobile=useIsMobile();
+
+    // Permisos para editar información de pago
+    const canEditPayment=user?(user.dept==="Finanzas"||user.dept==="Dirección"||user.dept==="Compras"||user.dept==="Ingenieria"):false;
+
+    // Estados del modal de edición de pago
+    const [editingPaymentFor,setEditingPaymentFor]=useState(null);
+    const [paymentAmount,setPaymentAmount]=useState("");
+    const [paymentCurrency,setPaymentCurrency]=useState("MXN");
+    const [paymentMethod,setPaymentMethod]=useState("");
+    const [paymentProveedor,setPaymentProveedor]=useState("");
+    const [paymentDueDate,setPaymentDueDate]=useState("");
+    const [paymentAttachments,setPaymentAttachments]=useState([]);
+    const [uploadingPaymentAttach,setUploadingPaymentAttach]=useState(false);
+    const [paymentAttachErr,setPaymentAttachErr]=useState(null);
 
     // Combinar tareas normales + quick tasks pausadas
     const pausedTasks=useMemo(()=>{
@@ -6404,11 +6418,38 @@ export default function App(){
           pausedDays:qt.pausedAt?Math.floor((new Date()-new Date(qt.pausedAt))/86400000):0
         }));
 
-      // Ordenar por antigüedad de pausa (más antiguas primero)
-      return [...normalTasks,...quickTasksPaused].sort((a,b)=>
-        new Date(a.pausedAt||0)-new Date(b.pausedAt||0)
-      );
+      // Ordenar por prioridad de pago, desempate por antigüedad
+      return [...normalTasks,...quickTasksPaused].sort((a,b)=>{
+        const priorityA=a.paymentPriority||999999;
+        const priorityB=b.paymentPriority||999999;
+        if(priorityA!==priorityB){
+          return priorityA-priorityB;
+        }
+        // Desempate: más antiguas primero
+        return new Date(a.pausedAt||0)-new Date(b.pausedAt||0);
+      });
     },[tasks,quickTasks]);
+
+    // Calcular resumen de montos de pago
+    const paymentSummary=useMemo(()=>{
+      let mxn=0,usd=0,withAmount=0;
+      let earliestDate=null;
+
+      pausedTasks.forEach(item=>{
+        if(item.paymentAmount){
+          withAmount++;
+          if(item.paymentCurrency==="MXN") mxn+=item.paymentAmount;
+          if(item.paymentCurrency==="USD") usd+=item.paymentAmount;
+        }
+
+        if(item.paymentDueDate){
+          const d=new Date(item.paymentDueDate);
+          if(!earliestDate||d<earliestDate) earliestDate=d;
+        }
+      });
+
+      return {mxn,usd,withAmount,earliestDate};
+    },[pausedTasks]);
 
     const handleResume=(item)=>{
       if(item.itemType==="normal"){
@@ -6418,7 +6459,130 @@ export default function App(){
       }
     };
 
+    const handleChangePaymentPriority=(item,direction,currentIndex)=>{
+      if(!canEditPayment) return;
+
+      const idx=currentIndex;
+      if(idx===-1) return;
+      if(direction==="up"&&idx===0) return;
+      if(direction==="down"&&idx===pausedTasks.length-1) return;
+
+      // Swap: intercambiar en el array
+      const reordered=[...pausedTasks];
+      const swapIdx=direction==="up"?idx-1:idx+1;
+      [reordered[idx],reordered[swapIdx]]=[reordered[swapIdx],reordered[idx]];
+
+      // Reasignar prioridades secuenciales (1, 2, 3...)
+      reordered.forEach((t,i)=>{
+        const newPriority=i+1;
+        const currentPriority=t.paymentPriority||999999;
+
+        if(currentPriority!==newPriority){
+          const patch={paymentPriority:newPriority};
+
+          if(t.itemType==="normal"){
+            onUpdateTask(t.id,patch);
+          } else {
+            onUpdateQuickTask(t.id,patch);
+          }
+        }
+      });
+    };
+
+    const handlePaymentAttach=async files=>{
+      if(!editingPaymentFor) return;
+      setPaymentAttachErr(null);
+
+      for(const file of files){
+        if(file.size>MAX_ATTACHMENT_SIZE){
+          setPaymentAttachErr(`"${file.name}" supera 20MB`);
+          continue;
+        }
+
+        setUploadingPaymentAttach(true);
+        const itemType=editingPaymentFor.itemType;
+        const itemId=editingPaymentFor.id;
+        const path=`payment/${itemType}-${itemId}/${Date.now()}_${file.name}`;
+
+        const{error}=await supabase.storage.from("task-attachments").upload(path,file);
+        setUploadingPaymentAttach(false);
+
+        if(error){
+          setPaymentAttachErr(error.message);
+          continue;
+        }
+
+        const newAtt={
+          nombre:file.name,
+          url:path,
+          subidoPor:{id:user.id,name:user.name,ini:user.ini,uc:user.uc},
+          fecha:new Date().toISOString()
+        };
+        setPaymentAttachments(p=>[...p,newAtt]);
+      }
+    };
+
+    const handleRemovePaymentAttachment=idx=>{
+      setPaymentAttachments(p=>p.filter((_,i)=>i!==idx));
+    };
+
+    const handleOpenPaymentModal=item=>{
+      setEditingPaymentFor(item);
+      setPaymentAmount(item.paymentAmount||"");
+      setPaymentCurrency(item.paymentCurrency||"MXN");
+      setPaymentMethod(item.paymentMethod||"");
+      setPaymentProveedor(item.paymentProveedor||"");
+      setPaymentDueDate(item.paymentDueDate||"");
+      setPaymentAttachments(item.paymentAttachments||[]);
+      setPaymentAttachErr(null);
+    };
+
+    const handleSavePaymentInfo=()=>{
+      // Validación: monto es obligatorio
+      if(!paymentAmount||parseFloat(paymentAmount)<=0){
+        setPaymentAttachErr("El monto es obligatorio y debe ser mayor a 0");
+        return;
+      }
+
+      const patch={
+        paymentAmount:parseFloat(paymentAmount),
+        paymentCurrency,
+        paymentMethod,
+        paymentProveedor,
+        paymentDueDate:paymentDueDate||null,
+        paymentAttachments
+      };
+
+      if(editingPaymentFor.itemType==="normal"){
+        onUpdateTask(editingPaymentFor.id,patch);
+      } else {
+        onUpdateQuickTask(editingPaymentFor.id,patch);
+      }
+
+      // Cerrar modal
+      setEditingPaymentFor(null);
+      setPaymentAmount("");
+      setPaymentCurrency("MXN");
+      setPaymentMethod("");
+      setPaymentProveedor("");
+      setPaymentDueDate("");
+      setPaymentAttachments([]);
+      setPaymentAttachErr(null);
+    };
+
+    const handleClosePaymentModal=()=>{
+      setEditingPaymentFor(null);
+      setPaymentAmount("");
+      setPaymentCurrency("MXN");
+      setPaymentMethod("");
+      setPaymentProveedor("");
+      setPaymentDueDate("");
+      setPaymentAttachments([]);
+      setPaymentAttachErr(null);
+    };
+
     return(
+      <>
       <div style={{minHeight:"100vh",background:BG}}>
         <NavBar left={
           <><BackBtn onClick={onBack}/>
@@ -6429,6 +6593,53 @@ export default function App(){
         }/>
 
         <div style={{maxWidth:900,margin:"0 auto",padding:isMobile?"16px":"24px"}}>
+          {/* Recuadro de monto total */}
+          {pausedTasks.length>0&&(
+            <Card sx={{padding:"16px 20px",marginBottom:16,background:"linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%)",border:"1px solid #FCD34D"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                <span style={{fontSize:18}}>💰</span>
+                <div style={{fontSize:13,fontWeight:700,color:"#92400E"}}>MONTO TOTAL PENDIENTE DE PAGO</div>
+              </div>
+
+              {paymentSummary.withAmount===0?(
+                <div style={{fontSize:13,color:"#78716C",fontStyle:"italic"}}>
+                  Ninguna tarea tiene monto asignado
+                </div>
+              ):(
+                <>
+                  <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center",marginBottom:8}}>
+                    {paymentSummary.mxn>0&&(
+                      <span style={{fontSize:20,fontWeight:700,color:"#92400E"}}>
+                        ${paymentSummary.mxn.toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:2})} MXN
+                      </span>
+                    )}
+                    {paymentSummary.usd>0&&(
+                      <span style={{fontSize:20,fontWeight:700,color:"#92400E"}}>
+                        ${paymentSummary.usd.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})} USD
+                      </span>
+                    )}
+                  </div>
+
+                  <div style={{display:"flex",gap:12,flexWrap:"wrap",fontSize:12,color:"#78716C"}}>
+                    <span>
+                      {paymentSummary.withAmount} de {pausedTasks.length} {pausedTasks.length===1?"tarea tiene":"tareas tienen"} monto asignado
+                    </span>
+                    {paymentSummary.earliestDate&&(()=>{
+                      const daysUntil=Math.floor((paymentSummary.earliestDate-new Date())/86400000);
+                      const dateStr=paymentSummary.earliestDate.toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"});
+                      return(
+                        <span>
+                          · Fecha más próxima: {dateStr}
+                          ({daysUntil>0?`en ${daysUntil} ${daysUntil===1?"día":"días"}`:daysUntil===0?"hoy":`vencida hace ${Math.abs(daysUntil)} ${Math.abs(daysUntil)===1?"día":"días"}`})
+                        </span>
+                      );
+                    })()}
+                  </div>
+                </>
+              )}
+            </Card>
+          )}
+
           {pausedTasks.length===0?(
             <div style={{textAlign:"center",padding:"60px 20px",color:T3}}>
               <div style={{fontSize:48,marginBottom:16}}>✓</div>
@@ -6481,7 +6692,122 @@ export default function App(){
                             <div style={{fontSize:12,color:"#92400E",lineHeight:1.5}}>{item.pausedNote}</div>
                           </div>
                         )}
+
+                        {/* Recuadro de información de pago */}
+                        {item.paymentAmount&&(
+                          <div style={{background:"#F0FDF4",border:"1px solid #86EFAC",borderRadius:6,padding:"10px 14px",marginBottom:8}}>
+                            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+                              <span style={{fontSize:14}}>💰</span>
+                              <div style={{fontSize:11,fontWeight:700,color:"#166534"}}>INFORMACIÓN DE PAGO</div>
+                            </div>
+
+                            {/* Monto */}
+                            <div style={{marginBottom:6}}>
+                              <span style={{fontSize:14,fontWeight:700,color:"#166534"}}>
+                                ${item.paymentAmount.toLocaleString(item.paymentCurrency==="MXN"?"es-MX":"en-US",{minimumFractionDigits:2,maximumFractionDigits:2})} {item.paymentCurrency||"MXN"}
+                              </span>
+                            </div>
+
+                            {/* Método */}
+                            {item.paymentMethod&&(
+                              <div style={{fontSize:12,color:"#166534",marginBottom:4}}>
+                                <span style={{fontWeight:600}}>Método:</span> {item.paymentMethod}
+                              </div>
+                            )}
+
+                            {/* Proveedor */}
+                            {item.paymentProveedor&&(
+                              <div style={{fontSize:12,color:"#166534",marginBottom:4}}>
+                                <span style={{fontWeight:600}}>Proveedor:</span> {item.paymentProveedor}
+                              </div>
+                            )}
+
+                            {/* Fecha requerida */}
+                            {item.paymentDueDate&&(()=>{
+                              const dueDate=new Date(item.paymentDueDate);
+                              const daysUntil=Math.floor((dueDate-new Date())/86400000);
+                              const dateStr=dueDate.toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"});
+                              const isOverdue=daysUntil<0;
+                              const isToday=daysUntil===0;
+
+                              return(
+                                <div style={{fontSize:12,color:isOverdue?"#DC2626":"#166534",marginBottom:item.paymentAttachments?.length>0?8:0}}>
+                                  <span style={{fontWeight:600}}>Fecha requerida:</span> {dateStr}
+                                  <span style={{marginLeft:4,fontWeight:600,color:isOverdue?"#DC2626":isToday?"#D97706":"#166534"}}>
+                                    ({isOverdue?`vencida hace ${Math.abs(daysUntil)} ${Math.abs(daysUntil)===1?"día":"días"}`:isToday?"hoy":`en ${daysUntil} ${daysUntil===1?"día":"días"}`})
+                                  </span>
+                                </div>
+                              );
+                            })()}
+
+                            {/* Adjuntos */}
+                            {item.paymentAttachments?.length>0&&(
+                              <div style={{marginTop:8,paddingTop:8,borderTop:"1px solid #BBF7D0"}}>
+                                {item.paymentAttachments.map((att,attIdx)=>(
+                                  <div key={attIdx} style={{display:"flex",alignItems:"center",gap:8,padding:"4px 0"}}>
+                                    <span style={{fontSize:12}}>📎</span>
+                                    <span style={{fontSize:12,color:"#166534",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                                      {att.nombre}
+                                    </span>
+                                    <button
+                                      onClick={(e)=>{
+                                        e.stopPropagation();
+                                        downloadAttachmentIOS(att);
+                                      }}
+                                      style={{background:"#DCFCE7",color:"#166534",border:"1px solid #86EFAC",padding:"4px 10px",borderRadius:4,cursor:"pointer",fontSize:11,fontWeight:600}}>
+                                      ⬇
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Botón de editar */}
+                            {canEditPayment&&(
+                              <div style={{marginTop:8,paddingTop:8,borderTop:"1px solid #BBF7D0"}}>
+                                <button
+                                  onClick={(e)=>{
+                                    e.stopPropagation();
+                                    handleOpenPaymentModal(item);
+                                  }}
+                                  style={{background:"#DCFCE7",color:"#166534",border:"1px solid #86EFAC",padding:"6px 12px",borderRadius:6,cursor:"pointer",fontSize:12,fontWeight:600,width:"100%"}}>
+                                  ✏️ Editar información de pago
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Botón agregar si no hay datos */}
+                        {!item.paymentAmount&&canEditPayment&&(
+                          <button
+                            onClick={(e)=>{
+                              e.stopPropagation();
+                              handleOpenPaymentModal(item);
+                            }}
+                            style={{background:"#F0FDF4",color:"#166534",border:"1px solid #86EFAC",padding:"8px 12px",borderRadius:6,cursor:"pointer",fontSize:12,fontWeight:600,marginBottom:8,width:"100%"}}>
+                            + Agregar información de pago
+                          </button>
+                        )}
                       </div>
+
+                      {/* Flechas de reordenamiento */}
+                      {canEditPayment&&(
+                        <div style={{display:"flex",flexDirection:"column",gap:4,marginRight:8}}>
+                          <button
+                            onClick={(e)=>{e.stopPropagation();handleChangePaymentPriority(item,"up",idx);}}
+                            disabled={idx===0}
+                            style={{background:idx===0?"#E2E8F0":CARD,color:idx===0?T3:T1,border:`1px solid ${BD}`,borderRadius:6,width:28,height:28,cursor:idx===0?"not-allowed":"pointer",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                            ↑
+                          </button>
+                          <button
+                            onClick={(e)=>{e.stopPropagation();handleChangePaymentPriority(item,"down",idx);}}
+                            disabled={idx===pausedTasks.length-1}
+                            style={{background:idx===pausedTasks.length-1?"#E2E8F0":CARD,color:idx===pausedTasks.length-1?T3:T1,border:`1px solid ${BD}`,borderRadius:6,width:28,height:28,cursor:idx===pausedTasks.length-1?"not-allowed":"pointer",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                            ↓
+                          </button>
+                        </div>
+                      )}
 
                       {/* Botón reanudar */}
                       <button
@@ -6500,6 +6826,145 @@ export default function App(){
           )}
         </div>
       </div>
+
+      {/* Modal de edición de información de pago */}
+      {editingPaymentFor&&(
+        <div onClick={handleClosePaymentModal} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:CARD,borderRadius:12,padding:isMobile?20:24,maxWidth:500,width:"100%",maxHeight:"90vh",overflow:"auto"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+              <div style={{fontSize:16,fontWeight:700,color:T1}}>
+                {editingPaymentFor.paymentAmount?"✏️ Editar Información de Pago":"➕ Agregar Información de Pago"}
+              </div>
+              <button onClick={handleClosePaymentModal} style={{background:"none",border:"none",fontSize:20,color:T3,cursor:"pointer"}}>✕</button>
+            </div>
+
+            {/* Tarea */}
+            <div style={{fontSize:13,color:T2,marginBottom:16,padding:10,background:BG,borderRadius:6}}>
+              <span style={{fontWeight:600}}>Tarea:</span> {editingPaymentFor.title}
+            </div>
+
+            {/* Monto */}
+            <div style={{marginBottom:12}}>
+              <label style={{display:"block",fontSize:12,fontWeight:600,color:T1,marginBottom:4}}>
+                Monto <span style={{color:"#DC2626"}}>*</span>
+              </label>
+              <div style={{display:"flex",gap:8}}>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={paymentAmount}
+                  onChange={e=>setPaymentAmount(e.target.value)}
+                  placeholder="0.00"
+                  style={{flex:1,padding:"8px 12px",border:`1px solid ${BD}`,borderRadius:6,fontSize:14,color:T1,background:CARD}}
+                />
+                <select
+                  value={paymentCurrency}
+                  onChange={e=>setPaymentCurrency(e.target.value)}
+                  style={{padding:"8px 12px",border:`1px solid ${BD}`,borderRadius:6,fontSize:14,color:T1,background:CARD,cursor:"pointer"}}>
+                  <option value="MXN">MXN</option>
+                  <option value="USD">USD</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Método */}
+            <div style={{marginBottom:12}}>
+              <label style={{display:"block",fontSize:12,fontWeight:600,color:T1,marginBottom:4}}>Método de pago</label>
+              <select
+                value={paymentMethod}
+                onChange={e=>setPaymentMethod(e.target.value)}
+                style={{width:"100%",padding:"8px 12px",border:`1px solid ${BD}`,borderRadius:6,fontSize:14,color:T1,background:CARD,cursor:"pointer"}}>
+                <option value="">— Seleccionar —</option>
+                <option value="Transferencia">Transferencia</option>
+                <option value="Tarjeta">Tarjeta</option>
+                <option value="Efectivo">Efectivo</option>
+              </select>
+            </div>
+
+            {/* Proveedor */}
+            <div style={{marginBottom:12}}>
+              <label style={{display:"block",fontSize:12,fontWeight:600,color:T1,marginBottom:4}}>Proveedor</label>
+              <input
+                type="text"
+                value={paymentProveedor}
+                onChange={e=>setPaymentProveedor(e.target.value)}
+                placeholder="Nombre del proveedor"
+                style={{width:"100%",padding:"8px 12px",border:`1px solid ${BD}`,borderRadius:6,fontSize:14,color:T1,background:CARD}}
+              />
+            </div>
+
+            {/* Fecha requerida */}
+            <div style={{marginBottom:12}}>
+              <label style={{display:"block",fontSize:12,fontWeight:600,color:T1,marginBottom:4}}>Fecha requerida</label>
+              <input
+                type="date"
+                value={paymentDueDate}
+                onChange={e=>setPaymentDueDate(e.target.value)}
+                style={{width:"100%",padding:"8px 12px",border:`1px solid ${BD}`,borderRadius:6,fontSize:14,color:T1,background:CARD}}
+              />
+            </div>
+
+            {/* Adjuntos */}
+            <div style={{marginBottom:16}}>
+              <label style={{display:"block",fontSize:12,fontWeight:600,color:T1,marginBottom:8}}>Adjuntos (cotizaciones, facturas)</label>
+
+              {paymentAttachments.length>0&&(
+                <div style={{marginBottom:8}}>
+                  {paymentAttachments.map((att,i)=>(
+                    <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",background:BG,borderRadius:6,marginBottom:4}}>
+                      <span style={{fontSize:12}}>📎</span>
+                      <span style={{flex:1,fontSize:12,color:T2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{att.nombre}</span>
+                      <button
+                        onClick={()=>handleRemovePaymentAttachment(i)}
+                        style={{background:"none",border:"none",color:T3,cursor:"pointer",fontSize:16}}>
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <label style={{display:"inline-block",padding:"8px 16px",background:BG,border:`1px solid ${BD}`,borderRadius:6,cursor:"pointer",fontSize:12,fontWeight:600,color:T1}}>
+                📎 Adjuntar archivo
+                <input
+                  type="file"
+                  multiple
+                  style={{display:"none"}}
+                  onChange={e=>{
+                    const files=Array.from(e.target.files||[]);
+                    handlePaymentAttach(files);
+                    e.target.value="";
+                  }}
+                />
+              </label>
+              {uploadingPaymentAttach&&<span style={{marginLeft:8,fontSize:12,color:T3}}>Subiendo...</span>}
+            </div>
+
+            {/* Error */}
+            {paymentAttachErr&&(
+              <div style={{padding:10,background:"#FEE2E2",border:"1px solid #FCA5A5",borderRadius:6,marginBottom:12,fontSize:12,color:"#DC2626"}}>
+                {paymentAttachErr}
+              </div>
+            )}
+
+            {/* Botones */}
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+              <button
+                onClick={handleClosePaymentModal}
+                style={{padding:"8px 16px",background:BG,border:`1px solid ${BD}`,borderRadius:6,cursor:"pointer",fontSize:13,fontWeight:600,color:T1}}>
+                Cancelar
+              </button>
+              <button
+                onClick={handleSavePaymentInfo}
+                style={{padding:"8px 16px",background:"#166534",border:"none",borderRadius:6,cursor:"pointer",fontSize:13,fontWeight:600,color:"#FFF"}}>
+                💾 Guardar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      </>
     );
   }
 
@@ -6572,7 +7037,7 @@ export default function App(){
 
   if(screen==="versions"&&user&&(user.dept==="Dirección"||user.dept==="Ingenieria")) return <RealtimeContext.Provider value={realtimeContextValue}><style>{CSS}</style><ScreenVersions user={user} onBack={()=>setScreen("dash")}/></RealtimeContext.Provider>;
 
-  if(screen==="pausedForPayment"&&user) return <RealtimeContext.Provider value={realtimeContextValue}><style>{CSS}</style><ScreenPausedForPayment tasks={tasks} quickTasks={quickTasks} user={user} onBack={()=>setScreen("dash")} onTaskClick={t=>{
+  if(screen==="pausedForPayment"&&user) return <RealtimeContext.Provider value={realtimeContextValue}><style>{CSS}</style><ScreenPausedForPayment tasks={tasks} quickTasks={quickTasks} user={user} onBack={()=>setScreen("dash")} onUpdateTask={updateTask} onUpdateQuickTask={updateQuickTask} onTaskClick={t=>{
     if(t._action==="resume"){
       updateTask(t.id,{pausedForPayment:false,pausedAt:null,pausedBy:null,pausedNote:""});
     } else {
